@@ -19,7 +19,7 @@ DRIVE = SANDBOX / "drive"
 CLOCK_FILE = SANDBOX / "clock.json"
 FLAGS_FILE = SANDBOX / "flags.json"
 
-PORTS = {"hr": 7101, "chat": 7102, "mail": 7103, "smtp": 7125}
+PORTS = {"hr": 7101, "chat": 7102, "mail": 7103, "sso": 7104, "smtp": 7125}
 DOMAIN = "acme.test"
 
 

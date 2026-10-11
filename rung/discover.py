@@ -37,8 +37,9 @@ def discover_http(app: str, base: str, refresh=False) -> dict:
                 break
         except Exception as ex:  # noqa: BLE001
             found["tried"].append(f"GET {path} -> {type(ex).__name__}")
-    CACHE.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(found))
+    if found["openapi"] or all("->  4" in t or " 404" in t for t in found["tried"]):
+        CACHE.mkdir(parents=True, exist_ok=True)   # cache definitive answers only, never outages
+        p.write_text(json.dumps(found))
     return found
 
 

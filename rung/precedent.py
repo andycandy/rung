@@ -47,9 +47,26 @@ def chat_announcements(ctx, title: str) -> list[Citation]:
     out = []
     for text in items:
         if title.lower() in text.lower():
-            for c in set(CHANNEL_RE.findall(text.lower())):
+            body = re.sub(r"^\s*#[\w-]+\s*", "", text)  # drop the label of the channel it was posted in
+            for c in set(CHANNEL_RE.findall(body.lower())):
                 out.append(Citation("precedent:chat", f"#{c}", "announcement: " + text[:200]))
     return out
+
+
+def _candidates(ctx, text: str) -> list[dict]:
+    cands = []
+    if re.search(r"\badmin", text, re.I) and re.search(r"\b(make|made|grant|granted|give|given|promote|elevate)\b", text, re.I):
+        cands.append({"kind": "role", "value": "admin"})
+    for c in CHANNEL_RE.findall(text.lower()):
+        cands.append({"kind": "channel", "value": c})
+    return cands
+
+
+def request_asks(ctx, request: str) -> dict:
+    """Specific asks inside the request itself ('...and add her to #finance'). The requester
+    is authorised, but the asks still go through policy -- and refusals are reported back."""
+    return {"id": "request", "sender": "requester", "subject": "the request", "trusted_sender": True, "from_request": True,
+            "excerpt": request[:300], "candidates": _candidates(ctx, request)}
 
 
 def mail_instructions(ctx) -> list[dict]:

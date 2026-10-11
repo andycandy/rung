@@ -28,15 +28,17 @@ SNAPSHOT_JS = r"""
     if (!vis(e) || e.type === 'hidden') return;
     const id = String(++n); e.setAttribute('data-rung-id', id);
     const t = e.tagName.toLowerCase();
-    const item = {id, tag: t};
+    const item = {id, tag: t, name: e.name || '', form: e.form ? [...document.forms].indexOf(e.form) : -1};
     if (t === 'a') { item.text = e.innerText.trim(); item.href = e.getAttribute('href'); }
     else if (t === 'button') { item.text = e.innerText.trim(); item.context = (e.closest('li,p,form,tr')||e.parentElement).innerText.trim().slice(0,120); }
     else if (t === 'select') { item.label = labelOf(e); item.options = [...e.options].map(o => o.textContent.trim()); }
-    else { item.type = e.type || 'text'; item.label = labelOf(e); item.value = e.type==='checkbox' ? e.checked : e.value; }
+    else { item.type = e.type || 'text'; item.label = labelOf(e); item.value = e.type==='checkbox' ? e.checked : e.value;
+           if (e.type === 'submit' || e.type === 'button') item.text = e.value; }
     out.push(item);
   });
   const text = (document.querySelector('main')||document.body).innerText.slice(0, 1500);
-  return {url: location.pathname + location.search, title: document.title, elements: out, text,
+  const forms = [...document.forms].map(f => (f.getAttribute('action') || location.pathname));
+  return {url: location.pathname + location.search, title: document.title, elements: out, text, forms,
           alert: (document.getElementById('flash')||{}).innerText || ''};
 }
 """
@@ -46,9 +48,14 @@ class AppBrowser:
     def __init__(self, ctx, base_url: str, shots: Path):
         self.ctx, self.base, self.shots = ctx, base_url.rstrip("/"), shots
         self.page = ctx.new_page()
-        self.recording: list[dict] | None = None
-        self.tag = None
+        self.probe_page = None
+        self.recorders: dict = {}          # page -> (tag, list) ; probes record separately from exploration
         ctx.route("**/api/**", self._route)
+
+    def get_probe_page(self):
+        if self.probe_page is None:
+            self.probe_page = self.ctx.new_page()
+        return self.probe_page
 
     # ---------------------------------------------------------------- capture
     def _route(self, route):
@@ -59,7 +66,12 @@ class AppBrowser:
         except Exception:  # noqa: BLE001 -- page navigated away; let the request go
             route.continue_()
             return
-        if self.recording is not None:
+        try:
+            page = req.frame.page
+        except Exception:  # noqa: BLE001
+            page = self.page
+        rec = self.recorders.get(page)
+        if rec is not None:
             try:
                 data = json.loads(body) if body else None
             except Exception:  # noqa: BLE001
@@ -68,17 +80,17 @@ class AppBrowser:
                 post = req.post_data_json if req.post_data else None
             except Exception:  # noqa: BLE001
                 post = req.post_data
-            self.recording.append({"tag": self.tag, "t": time.time(), "method": req.method,
+            rec[1].append({"tag": rec[0], "t": time.time(), "method": req.method,
                                    "url": req.url.replace(self.base, ""), "headers": dict(req.headers),
                                    "body": post, "status": resp.status, "response": data})
         route.fulfill(response=resp, body=body)
 
-    def start_recording(self, tag: str):
-        self.recording, self.tag = [], tag
+    def start_recording(self, tag: str, page=None):
+        self.recorders[page or self.page] = (tag, [])
 
-    def stop_recording(self) -> list[dict]:
-        rec, self.recording = self.recording or [], None
-        return rec
+    def stop_recording(self, page=None) -> list[dict]:
+        rec = self.recorders.pop(page or self.page, None)
+        return rec[1] if rec else []
 
     # ---------------------------------------------------------------- actions
     def goto(self, path: str):

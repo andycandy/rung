@@ -19,9 +19,9 @@ from rung import runtime, store
 
 def cli_approver(auto: str | None):
     def ask(kind, question, options):
-        if auto == "yes":
+        if auto == "yes" and kind == "confirm":   # --yes never approves elevated/irreversible gates
             print(f"\n[auto-yes] {question}")
-            return "yes" if kind != "approve" else "approve"
+            return "yes"
         if auto == "no":
             print(f"\n[auto-no] {question}")
             return None

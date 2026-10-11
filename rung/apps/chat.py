@@ -29,6 +29,7 @@ class ChatApp(App):
                  "ignore": ["last_seen_at", "created_at", "id"]},
         "channel_member": {"key": ["channel", "user"], "compare": ["exists"]},
     }
+    HOME = "/"
     FIXTURE = {"username": "zz-sandbox", "display_name": "ZZ Sandbox", "email": f"zz-sandbox@{DOMAIN}", "title": "Sandbox fixture"}
 
     # ---------------------------------------------------------------- sessions
@@ -39,21 +40,9 @@ class ChatApp(App):
         return ab
 
     def login(self, ctx, ab):
-        """Generic login: find the username/password fields by label and submit."""
-        creds = vault()["chat"]
-        ab.goto("/login")
-        snap = ab.snapshot()
-        for e in snap["elements"]:
-            lab = (e.get("label") or "").lower()
-            if e["tag"] == "input" and e.get("type") == "password":
-                ab.fill(e["id"], creds["password"])
-            elif e["tag"] == "input" and "user" in lab:
-                ab.fill(e["id"], creds["username"])
-        btn = next(e for e in snap["elements"] if e["tag"] == "button")
-        ab.click(btn["id"])
-        ab._logged_in = True
+        from rung.apps.sso import ui_login
+        ui_login(ctx, ab, "/login", vault()["chat"], self.name)
         CookieHTTP.save(self.name, ab.cookies())
-        ctx.log("auth.login", {"app": self.name, "via": "ui", "identity": creds["username"]})
 
     def http(self, ctx):
         if not CookieHTTP.has(self.name):
@@ -96,26 +85,27 @@ class ChatApp(App):
 
     def dom_probe_user(self, ctx, username):
         ab = self.ab(ctx)
-        ab.start_recording("probe")
-        ab.goto(f"/people/{username}")
+        pg = ab.get_probe_page()     # probes use their own tab, so they never disturb an exploration in progress
+        ab.start_recording("probe", pg)
+        pg.goto(ab.base + f"/people/{username}", wait_until="networkidle")
         try:  # the page is an SPA: wait until the record rendered (or an error showed)
-            ab.page.wait_for_function("() => { const f=document.getElementById('flash'); const dds=[...document.querySelectorAll('dd')];"
+            pg.wait_for_function("() => { const f=document.getElementById('flash'); const dds=[...document.querySelectorAll('dd')];"
                                       " return (f && f.innerText) || (dds.length && dds.some(d => /Active|Deactivated/.test(d.innerText))); }", timeout=5000)
         except Exception:  # noqa: BLE001
             pass
-        state = ab.page.evaluate(r"""() => {
+        state = pg.evaluate(r"""() => {
             const alert=(document.getElementById('flash')||{}).innerText||'';
             if (/404/.test(alert)) return null;
             const out = {}; const dts=[...document.querySelectorAll('dt')];
             dts.forEach(dt => { const dd=dt.nextElementSibling; if(dd) out[dt.innerText.trim().toLowerCase()] = dd.innerText.trim(); });
             out.channels=[...document.querySelectorAll('main ul li')].map(li => (li.innerText.match(/#([\w-]+)/)||[])[1]).filter(Boolean);
             return out; }""")
-        rec = ab.stop_recording()
-        if state is None:
-            return None
-        if "/login" in ab.page.url:
+        rec = ab.stop_recording(pg)
+        if "/login" in pg.url:
             self.login(ctx, ab)
             return self.dom_probe_user(ctx, username)
+        if state is None:
+            return None
         out = {"username": username, "display_name": state.get("name"), "title": state.get("title"),
                "role": state.get("role"), "active": state.get("status") == "Active", "channels": state.get("channels", []),
                "email": state.get("email")}
@@ -139,17 +129,19 @@ class ChatApp(App):
         tag = f"explore-{secrets.token_hex(3)}"
         ab.start_recording(tag)
         t0 = time.time()
+        check = lambda: self.holds(ctx, delta)[0]  # noqa: E731 -- independent goal check after every action
+        vals = self.values(delta, args)
         try:
-            tr = explorer.run(ab, delta, self.values(delta, args))
+            tr = explorer.run(ab, delta, vals, check=check, start=self.HOME)
         except Exception as ex:  # noqa: BLE001 -- model unavailable/invalid: fall back to the offline policy
             ctx.log("llm.error", {"call": "explore_step", "error": str(ex)})
             explorer = HeuristicExplorer()
-            tr = explorer.run(ab, delta, self.values(delta, args))
+            tr = explorer.run(ab, delta, vals, check=check, start=self.HOME)
         if tr.gave_up and isinstance(explorer, LLMExplorer):
             ctx.log("explore.fallback", {"from": explorer.name, "reason": tr.gave_up})
             ctx.stats["llm_calls"] += tr.llm_calls
             explorer = HeuristicExplorer()
-            tr = explorer.run(ab, delta, self.values(delta, args))
+            tr = explorer.run(ab, delta, vals, check=check, start=self.HOME)
         rec = ab.stop_recording()
         shot = ab.screenshot(f"{delta.entity}-{tag}")
         ctx.stats["explore_steps"] += 1

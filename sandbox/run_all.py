@@ -22,13 +22,17 @@ def serve(app, port):
 
 def start():
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
-    servers = [serve(hr_app.app, PORTS["hr"]), serve(chat_app.app, PORTS["chat"]), serve(mail_app.app, PORTS["mail"])]
+    import os
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sandbox.sso.settings")
+    from django.core.wsgi import get_wsgi_application
+    servers = [serve(hr_app.app, PORTS["hr"]), serve(chat_app.app, PORTS["chat"]), serve(mail_app.app, PORTS["mail"]),
+               serve(get_wsgi_application(), PORTS["sso"])]
     smtp = mail_app.start_smtp()
     return servers, smtp
 
 
 if __name__ == "__main__":
     start()
-    print("sandbox up: hr :%(hr)d  chat :%(chat)d  mail :%(mail)d  smtp :%(smtp)d" % PORTS, flush=True)
+    print("sandbox up: hr :%(hr)d  chat :%(chat)d  mail :%(mail)d  sso :%(sso)d  smtp :%(smtp)d" % PORTS, flush=True)
     while True:
         time.sleep(3600)

@@ -13,18 +13,18 @@ from dataclasses import dataclass, field
 from rung.types import Delta
 
 # A small, app-agnostic vocabulary. Deliberately NOT tuned to any one app's labels:
-# the eval's redesigned UI (variant 3) uses labels chosen before this list was written.
+# UI variant 3 and the stock Django admin use labels chosen independently of this list.
+SYN = {"email": ["mail"], "username": ["user", "login"], "title": ["title", "role", "position", "job"],
+       "display_name": ["name"], "first_name": ["first", "given"], "last_name": ["last", "surname", "family"],
+       "active": ["active"], "channel": ["channel"]}
 LEX = {
-    "nav": ["people", "member", "members", "user", "users", "team", "staff", "employees", "person"],
+    "nav": ["people", "member", "members", "user", "users", "team", "staff", "employees", "person", "accounts"],
     "create": ["add", "new", "invite", "create"],
-    # field -> label tokens, checked in priority order (most specific first)
-    "field_tokens": [("email", ["mail"]), ("username", ["user", "login", "username"]),
-                     ("title", ["title", "role", "position", "job"]), ("display_name", ["name"])],
+    "submit": ["save", "create", "submit", "add", "invite", "send", "ok"],
     "active=False": ["deactivate", "disable", "suspend"],
     "active=True": ["reactivate", "enable", "activate"],
-    "member_remove": ["remove", "leave", "delete"],
-    "role=admin": ["admin"],
-    "avoid": ["logout", "sign out", "log out", "delete"],
+    "exists=False": ["remove", "leave", "delete"],
+    "avoid": ["logout", "log out", "sign out", "delete", "history", "password", "change password"],
 }
 
 
@@ -51,126 +51,174 @@ class Trace:
     gave_up: str = ""
 
 
+def field_score(field: str, label: str) -> float:
+    """How well a form label fits a delta field: synonyms first, then the field's own words."""
+    lab = norm(label)
+    if not lab:
+        return 0
+    words = SYN.get(field, []) + field.replace("is_", "").split("_")
+    hits = sum(1 for w in set(words) if w and w in lab)
+    return hits + (0.5 if any(lab.startswith(w) for w in SYN.get(field, [])) else 0)
+
+
 class HeuristicExplorer:
+    """Offline UI policy. Generic over deltas: it never branches on entity names.
+      1. fill any form whose inputs fit the fields still to change, then submit it;
+      2. pick a select option that equals a target value;
+      3. press a button whose verb matches a boolean/existence change;
+      4. otherwise navigate (target-named links > entity words > create words > breadth-first).
+    After every action the caller's probe decides whether the goal holds."""
     name = "explore:heuristic"
 
-    def __init__(self, budget: int = 12):
+    def __init__(self, budget: int = 14):
         self.budget = budget
 
-    # ---------------------------------------------------------- affordances
-    def _form_submit(self, ab, input_id):
-        return ab.el(input_id).evaluate(
-            "e => { const f = e.form; if (!f) return null; const b = f.querySelector('button,[type=submit]'); return b && b.getAttribute('data-rung-id'); }")
+    @staticmethod
+    def _wanted(delta: Delta, values: dict) -> dict:
+        w = {k: v for k, v in delta.expect.items() if k != "exists"}
+        if delta.expect.get("exists") is True:
+            w.update({k: v for k, v in delta.key.items()})
+        return {k: v for k, v in w.items() if v is not None}
 
-    def _sibling_button(self, ab, rid):
-        return ab.el(rid).evaluate(
-            "e => { let p = e.parentElement; for (let i=0;i<3 && p;i++,p=p.parentElement){ const b=p.querySelector('button'); if(b) return b.getAttribute('data-rung-id'); } return null; }")
-
-    def affordance(self, ab, snap, delta: Delta, values: dict, tr: Trace) -> bool:
-        els = snap["elements"]
-        exp = delta.expect
-        if delta.entity == "user" and exp.get("exists") is True:
-            inputs = [e for e in els if e["tag"] in ("input", "textarea") and e.get("type", "text") in ("text", "email", "")]
-            wanted = [f for f, _ in LEX["field_tokens"] if f in values]
-            matched: dict[str, str] = {}
-            for e in inputs:
-                lab = norm(e.get("label", ""))
-                if e.get("type") == "email" and "email" in wanted and "email" not in matched.values():
-                    matched[e["id"]] = "email"
+    def fill_form(self, ab, snap, delta, values, tr, used) -> bool:
+        if re.search(r"login|signin|sign-in", snap["url"], re.I):
+            return False
+        wanted = self._wanted(delta, values)
+        by_form: dict[int, list] = {}
+        for e in snap["elements"]:
+            by_form.setdefault(e.get("form", -1), []).append(e)
+        for fi, els in by_form.items():
+            if fi < 0:
+                continue
+            inputs = [e for e in els if e["tag"] in ("input", "textarea") and e.get("type") in ("text", "email", "checkbox", "", None)]
+            pwd = [e for e in els if e.get("type") == "password"]
+            pairs = sorted(((field_score(f, e.get("label", "")), f, e) for e in inputs for f in wanted), key=lambda x: -x[0])
+            matched, taken = {}, set()
+            for sc, f, e in pairs:
+                if sc <= 0 or f in matched or e["id"] in taken:
                     continue
-                for f, toks in LEX["field_tokens"]:
-                    if f in wanted and f not in matched.values() and any(t in lab for t in toks):
-                        matched[e["id"]] = f
-                        break
-            rest_in = [e for e in inputs if e["id"] not in matched]
-            rest_f = [f for f in wanted if f not in matched.values()]
-            if len(rest_in) == 1 and len(rest_f) == 1:  # assign the last field by elimination
-                matched[rest_in[0]["id"]] = rest_f[0]
-            if len(matched) >= 2 and len(matched) == len(inputs):
-                for rid, f in matched.items():
-                    ab.fill(rid, values[f])
-                    tr.actions.append(("fill", rid, f))
-                sub = self._form_submit(ab, next(iter(matched)))
-                if sub:
-                    ab.click(sub)
-                    tr.actions.append(("click", sub, "submit"))
-                    return True
-        if delta.entity == "user" and "active" in exp:
-            words = LEX[f"active={exp['active']}"]
-            for e in els:
-                if e["tag"] == "button" and score(e.get("text", ""), words) >= 2:
-                    ab.click(e["id"])
-                    tr.actions.append(("click", e["id"], e["text"]))
-                    return True
-        if delta.entity == "user" and exp.get("role") == "admin":
-            for e in els:
-                if e.get("type") == "checkbox" and score(e.get("label", ""), LEX["role=admin"]):
-                    ab.check(e["id"])
-                    tr.actions.append(("check", e["id"], e["label"]))
-                    return True
-        if delta.entity == "channel_member":
-            ch = norm(values["channel"]).lstrip("#")
-            if exp.get("exists") is True:
-                for e in els:
-                    if e["tag"] == "select":
-                        opt = next((o for o in e["options"] if norm(o).lstrip("#") == ch), None)
-                        if opt:
-                            ab.select(e["id"], opt)
-                            btn = self._sibling_button(ab, e["id"])
-                            if btn:
-                                ab.click(btn)
-                                tr.actions.append(("select+click", e["id"], opt))
-                                return True
-            else:
-                for e in els:
-                    if e["tag"] == "button" and score(e.get("text", ""), LEX["member_remove"]) and \
-                            re.search(rf"#?{re.escape(ch)}\b", norm(e.get("text", "")) + " " + norm(e.get("context", ""))):
-                        ab.click(e["id"])
-                        tr.actions.append(("click", e["id"], e["text"]))
-                        return True
+                if (e.get("type") == "checkbox") != isinstance(wanted[f], bool):
+                    continue
+                matched[f] = e
+                taken.add(e["id"])
+
+            def differs(f, e):
+                if isinstance(wanted[f], bool):
+                    return bool(e.get("value")) != wanted[f]
+                return str(e.get("value") or "") != str(wanted[f])
+            todo = {f: e for f, e in matched.items() if differs(f, e)}
+            if not todo or (snap["url"], fi, tuple(sorted(todo))) in used:
+                continue
+            if delta.expect.get("exists") is True and not all(k in matched for k in delta.key):
+                continue  # a create form must carry the entity's identity
+            used.add((snap["url"], fi, tuple(sorted(todo))))
+            for f, e in todo.items():
+                if isinstance(wanted[f], bool):
+                    ab.check(e["id"], wanted[f])
+                else:
+                    ab.fill(e["id"], wanted[f])
+                tr.actions.append(("fill", e["id"], f))
+            if pwd and delta.expect.get("exists") is True:
+                import secrets
+                secret = secrets.token_urlsafe(14) + "!9a"
+                for e in pwd:   # initial password: random, never logged; the person resets it on first login
+                    ab.fill(e["id"], secret)
+                tr.actions.append(("fill", "password", "<generated>"))
+            subs = [e for e in els if (e["tag"] == "button" and e.get("type", "submit") != "button") or e.get("type") == "submit"]
+            subs.sort(key=lambda e: -(3 if e.get("name") == "_save" else score(e.get("text", ""), LEX["submit"])))
+            if subs:
+                ab.click(subs[0]["id"])
+                tr.actions.append(("click", subs[0]["id"], subs[0].get("text")))
+                return True
         return False
 
-    # ---------------------------------------------------------- navigation
+    def pick_option(self, ab, snap, delta, values, tr, used) -> bool:
+        if delta.expect.get("exists") is not True:
+            return False
+        targets = {norm(v).lstrip("#") for v in delta.key.values()}
+        for e in snap["elements"]:
+            if e["tag"] != "select" or (snap["url"], e["id"]) in used:
+                continue
+            opt = next((o for o in e["options"] if norm(o).lstrip("#") in targets), None)
+            if opt:
+                used.add((snap["url"], e["id"]))
+                ab.select(e["id"], opt)
+                btn = ab.el(e["id"]).evaluate(
+                    "e => { let p = e.parentElement; for (let i=0;i<3 && p;i++,p=p.parentElement){ const b=p.querySelector('button,[type=submit]'); if(b) return b.getAttribute('data-rung-id'); } return null; }")
+                if btn:
+                    ab.click(btn)
+                    tr.actions.append(("select+click", e["id"], opt))
+                    return True
+        return False
+
+    def press_verb(self, ab, snap, delta, values, tr, used) -> bool:
+        verbs = []
+        for f, v in delta.expect.items():
+            if isinstance(v, bool):
+                verbs += LEX.get(f"{f}={v}", [])
+        if not verbs:
+            return False
+        # when the delta's key names a sub-thing (e.g. a channel), the button must mention it
+        subs = [norm(v).lstrip("#") for k, v in delta.key.items() if k not in ("user", "username", "id")]
+        for e in snap["elements"]:
+            if e["tag"] not in ("button", "input") or (e["tag"] == "input" and e.get("type") not in ("submit", "button")):
+                continue
+            text = norm(e.get("text", ""))
+            if not score(text, verbs) or (snap["url"], e["id"]) in used:
+                continue
+            ctx_text = text + " " + norm(e.get("context", ""))
+            if subs and not all(re.search(rf"#?{re.escape(s)}\b", ctx_text) for s in subs):
+                continue
+            used.add((snap["url"], e["id"]))
+            ab.click(e["id"])
+            tr.actions.append(("click", e["id"], e.get("text")))
+            return True
+        return False
+
     def next_link(self, snap, delta: Delta, values: dict, visited: set):
-        """Prefer links that name the target entity, then entity-ish words, then create words
-        (for creates); otherwise fall back to any unvisited in-app link (breadth-first)."""
-        targets = [norm(values.get(k)) for k in ("username", "user", "display_name") if values.get(k)]
+        targets = [norm(v) for k, v in delta.key.items() if isinstance(v, str)] + \
+                  [norm(values.get(k)) for k in ("username", "user", "display_name") if values.get(k)]
+        ent_words = LEX["nav"] + delta.entity.split("_")
         best, bs, fallback = None, 0.0, None
         for e in snap["elements"]:
             href = e.get("href") or ""
             if e["tag"] != "a" or not href.startswith("/") or href in visited or href.startswith("/c/"):
                 continue
             t = norm(e.get("text"))
-            if score(t, LEX["avoid"]):
+            if score(t, LEX["avoid"]) or not t:
                 continue
             fallback = fallback or e
             s = 0.0
-            if any(t == x for x in targets) or any(x and href.rstrip("/").endswith("/" + x) for x in targets):
+            if any(x and (t == x or href.rstrip("/").endswith("/" + x)) for x in targets):
                 s = 10
-            s = max(s, 2 * score(t, LEX["nav"]))
-            if delta.entity == "user" and delta.expect.get("exists") is True:
-                s = max(s, 2.5 * score(t, LEX["create"]))
+            s = max(s, 2 * score(t, ent_words))
+            if delta.expect.get("exists") is True:
+                s = max(s, 2.5 * score(t, LEX["create"]) + (1 if score(t, ent_words) else 0))
             if s > bs:
                 best, bs = e, s
         return best if bs > 0 else fallback
 
-    def run(self, ab, delta: Delta, values: dict) -> Trace:
+    def run(self, ab, delta: Delta, values: dict, check=None, start: str = "/") -> Trace:
         tr = Trace()
         visited: set = set()
-        ab.goto("/")
+        used: set = set()
+        ab.goto(start)
         for _ in range(self.budget):
             snap = ab.snapshot()
             tr.pages.append(snap["url"])
             visited.add(snap["url"])
-            if self.affordance(ab, snap, delta, values, tr):
+            acted = any(f(ab, snap, delta, values, tr, used) for f in (self.fill_form, self.pick_option, self.press_verb))
+            if acted:
                 ab.settle()
-                return tr
+                if check is None or check():
+                    return tr
+                continue          # partly done (e.g. a two-step create): keep going from here
             link = self.next_link(snap, delta, values, visited)
             if not link:
-                if snap["url"] != "/":
-                    ab.goto("/")
+                if snap["url"] != start:
+                    ab.goto(start)
                     continue
-                tr.gave_up = "no relevant navigation from home"
+                tr.gave_up = "no relevant navigation left"
                 return tr
             visited.add(link["href"])
             ab.click(link["id"])
@@ -186,11 +234,11 @@ class LLMExplorer:
     def __init__(self, model, budget: int = 12):
         self.model, self.budget = model, budget
 
-    def run(self, ab, delta: Delta, values: dict) -> Trace:
+    def run(self, ab, delta: Delta, values: dict, check=None, start: str = "/") -> Trace:
         from rung.llm.calls import explore_step
 
         tr = Trace()
-        ab.goto("/")
+        ab.goto(start)
         history: list[str] = []
         for _ in range(self.budget):
             snap = ab.snapshot()
@@ -198,7 +246,10 @@ class LLMExplorer:
             step = explore_step(self.model, delta, values, snap, history[-6:])
             tr.llm_calls += 1
             if step.action == "done":
-                return tr
+                if check is None or check():
+                    return tr
+                history.append("you said done, but the independent check says the goal does NOT hold yet")
+                continue
             if step.action == "give_up":
                 tr.gave_up = step.reason
                 return tr

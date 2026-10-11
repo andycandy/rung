@@ -10,7 +10,8 @@ def get(name: str):
         from rung.apps.docs import DocsApp
         from rung.apps.hr import HRApp
         from rung.apps.mail import MailApp
-        for a in (HRApp(), ChatApp(), MailApp(), DocsApp()):
+        from rung.apps.sso import SSOApp
+        for a in (HRApp(), ChatApp(), MailApp(), DocsApp(), SSOApp()):
             _APPS[a.name] = a
     return _APPS[name]
 

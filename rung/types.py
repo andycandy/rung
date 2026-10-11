@@ -100,6 +100,8 @@ class GoalSpec:
     intents: list = field(default_factory=list)
     flags: list = field(default_factory=list)        # policy conflicts, injection attempts, ...
     questions: list = field(default_factory=list)
+    split: list = field(default_factory=list)        # several people named -> one child run each
+    rejected: str = ""                               # authorization failure (nothing is done)
 
     def to_json(self):
         return json.dumps(asdict(self), default=str)

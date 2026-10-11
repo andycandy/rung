@@ -57,7 +57,49 @@ class Anthropic:
         return "".join(b.get("text", "") for b in r.json()["content"])
 
 
+class Recording:
+    """Wraps any client; appends every prompt/response to a JSONL file (audit + replay)."""
+
+    def __init__(self, inner, path: str):
+        self.inner, self.path, self.calls = inner, path, 0
+
+    def complete(self, system: str, user: str, max_tokens: int = 1500) -> str:
+        t0 = time.time()
+        out = self.inner.complete(system, user, max_tokens)
+        self.calls += 1
+        with open(self.path, "a") as f:
+            f.write(json.dumps({"system": system, "user": user, "output": out, "s": round(time.time() - t0, 2),
+                                "model": getattr(self.inner, "model", "?")}) + "\n")
+        return out
+
+
+class Replay:
+    """Replays a recorded session deterministically (same prompts -> same outputs)."""
+
+    def __init__(self, path: str):
+        import hashlib
+        self.calls, self.by_key = 0, {}
+        for line in open(path):
+            r = json.loads(line)
+            self.by_key.setdefault(hashlib.sha1((r["system"] + r["user"]).encode()).hexdigest(), []).append(r["output"])
+        self._h = hashlib
+
+    def complete(self, system: str, user: str, max_tokens: int = 1500) -> str:
+        k = self._h.sha1((system + user).encode()).hexdigest()
+        if not self.by_key.get(k):
+            raise ModelError("prompt not in recording (the run diverged from the recorded one)")
+        self.calls += 1
+        return self.by_key[k].pop(0)
+
+
 def from_env():
+    m = _from_env()
+    if m is not None and os.environ.get("RUNG_RECORD"):
+        return Recording(m, os.environ["RUNG_RECORD"])
+    return m
+
+
+def _from_env():
     kind = os.environ.get("RUNG_MODEL", "").lower()
     name = os.environ.get("RUNG_MODEL_NAME")
     if kind == "nim":
@@ -65,6 +107,8 @@ def from_env():
                                 name or "nvidia/nemotron-3-super-120b-a12b")
     if kind == "openai":
         return OpenAICompatible(os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"), os.environ["OPENAI_API_KEY"], name)
+    if kind == "replay":
+        return Replay(os.environ["RUNG_REPLAY"])
     if kind == "anthropic":
         return Anthropic(os.environ["ANTHROPIC_API_KEY"], name or "claude-sonnet-5-5")
     return None

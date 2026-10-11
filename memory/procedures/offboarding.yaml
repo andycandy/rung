@@ -1,18 +1,20 @@
 # Offboarding -- added as data only (no code changes): it composes the same
 # library checks/derivations and the same apps as onboarding.
 task_type: offboarding
-match: [offboard, offboarding, leaving, last day, leaves, deactivate, exit]
+match: [offboard, offboarding, leaving, last day, leaves, resigned, resigning, "re:remove (his|her|their) access", "re:\\bquit"]
 subject: {entity: employee, statuses: [active, onboarding]}
 requires: [full_name, work_email]
+checks: [date_required]
 derive:
   - {name: username, fn: username_for, args: {employee: "{employee}"}}
   - {name: manager, fn: manager_of, args: {employee: "{employee}"}}
-  - {name: last_day, fn: date_or_today, args: {text: "{date_text}", label: last_day}}
+  - {name: last_day, fn: request_date, args: {label: last_day}}
   - {name: channels, fn: user_channels, args: {username: "{username}"}}
 steps:
   - id: remove_channels
     foreach: "{channels}"
     description: "Remove from #{item}"
+    not_before: "{last_day}T18:00:00+05:30"
     delta: {app: chat, entity: channel_member, key: {channel: "{item}", user: "{username}"}, expect: {exists: false}}
     required: false
     cite: "least-privilege: leavers keep no channel access"
@@ -20,6 +22,12 @@ steps:
     description: Deactivate the Chatter account
     not_before: "{last_day}T18:00:00+05:30"
     delta: {app: chat, entity: user, key: {username: "{username}"}, expect: {active: false}}
+    required: true
+    cite: "IT offboarding checklist"
+  - id: sso_deactivate
+    description: Disable the SSO login
+    not_before: "{last_day}T18:00:00+05:30"
+    delta: {app: sso, entity: user, key: {username: "{username}"}, expect: {active: false}}
     required: true
     cite: "IT offboarding checklist"
   - id: hr_terminated

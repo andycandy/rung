@@ -2,7 +2,7 @@
 # Team channels are NOT listed here: the SOP only says "the channels their team uses",
 # so they are mined from precedent (how peers are set up) on every run.
 task_type: onboarding
-match: [onboard, onboarding, new joiner, new hire, joining, starts on, set up]
+match: [onboard, onboarding, new joiner, new hire, joining, starts on, set up, "re:sort (out )?(her|his|their) accounts", "re:get \\w+ set up"]
 subject: {entity: employee, statuses: [offer_accepted, onboarding]}
 requires: [full_name, title, team, start_date, work_email]
 checks: [required_fields, date_agreement, existing_account]
@@ -11,6 +11,8 @@ derive:
   - {name: manager, fn: manager_of, args: {employee: "{employee}"}}
   - {name: team_channels, fn: team_channels, args: {employee: "{employee}", username: "{username}"}}
   - {name: team_channels_text, fn: join_channels, args: {items: "{team_channels}"}}
+  - {name: first_name, fn: split_name, args: {full_name: "{employee.full_name}", part: first}}
+  - {name: last_name, fn: split_name, args: {full_name: "{employee.full_name}", part: last}}
 steps:
   - id: hr_onboarding
     description: Set HR status to onboarding
@@ -30,6 +32,12 @@ steps:
             expect: {exists: true, display_name: "{employee.full_name}", email: "{employee.work_email}", title: "{employee.title}"}}
     required: true
     cite: "handbook/onboarding-sop.md step 2"
+  - id: sso_account
+    description: Create the SSO (Acme SSO) login
+    delta: {app: sso, entity: user, key: {username: "{username}"},
+            expect: {exists: true, email: "{employee.work_email}", first_name: "{first_name}", last_name: "{last_name}"}}
+    required: true
+    cite: "IT checklist: every employee gets an SSO login"
   - id: hr_link_chat
     description: Record the chat username in HR
     delta: {app: hr, entity: employee, key: {id: "{employee.id}"}, expect: {chat_username: "{username}"}}

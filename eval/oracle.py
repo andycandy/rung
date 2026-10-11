@@ -46,3 +46,14 @@ def chat_audit(action=None):
     with db("chat") as c:
         q = "SELECT * FROM audit" + (" WHERE action=?" if action else "")
         return [dict(r) | {"detail": json.loads(r["detail"])} for r in c.execute(q, (action,) if action else ())]
+
+
+def sso_user(username):
+    with db("sso") as c:
+        r = c.execute("SELECT * FROM auth_user WHERE username=?", (username,)).fetchone()
+        return dict(r) if r else None
+
+
+def latest_mail_to(addr, subject_contains=""):
+    ms = mail_to(addr, subject_contains)
+    return sorted(ms, key=lambda m: m["id"])[-1] if ms else None

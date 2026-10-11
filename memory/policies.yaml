@@ -27,3 +27,11 @@ rules:
   - id: IT-7
     deny: {app: chat, entity: user, expect_role: admin}
     reason: "Workspace admin rights are granted only by IT through a ticket (IT policy IT-7)."
+
+requesters:                # who may ask for what (checked against PeopleHub before anything runs)
+  internal_domains: [acme.test]
+  authority:
+    onboarding: [manager_of_subject, "team:People", "title:Head of .*"]
+    offboarding: [manager_of_subject, "team:People"]
+    joiners_report: ["team:People", "title:Head of .*"]
+    default: [manager_of_subject, "team:People", "title:Head of .*"]   # e.g. procedures learned from an SOP

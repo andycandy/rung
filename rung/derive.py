@@ -34,13 +34,12 @@ def required_fields(ctx, goal, proc, scope, answers):
 
 def date_agreement(ctx, goal, proc, scope, answers):
     """A date stated in the request must agree with the system of record."""
-    from rung.understand import resolve_date
     emp = scope["employee"]
-    asked = resolve_date(scope.get("date_text"))
+    asked = scope.get("date")
     if asked and emp.get("start_date") and asked != emp["start_date"]:
         if answers.get("start_date"):
             emp["start_date"] = answers["start_date"]
-            goal.gaps.append(Gap("start_date", emp["start_date"], "resolved", "answer from requester"))
+            goal.gaps.append(Gap("start_date", emp["start_date"], "resolved", "answer from requester (PeopleHub not updated)"))
         else:
             goal.questions.append({"key": "start_date", "q": f"You said '{scope['date_text']}' ({asked}) but PeopleHub says "
                                                              f"{emp['full_name']} starts {emp['start_date']}. Which date is right (YYYY-MM-DD)?"})
@@ -68,7 +67,14 @@ def existing_account(ctx, goal, proc, scope, answers):
                                                          "Reactivate it, or create a new account? (reactivate/new)"})
 
 
-CHECKS = {"required_fields": required_fields, "date_agreement": date_agreement, "existing_account": existing_account}
+def date_required(ctx, goal, proc, scope, answers):
+    """Irreversible, dated work (e.g. a last day) never defaults to today."""
+    if not scope.get("date"):
+        goal.questions.append({"key": "date", "q": f"What date should this happen on (YYYY-MM-DD)? I won't assume today for {proc['task_type']}."})
+
+
+CHECKS = {"required_fields": required_fields, "date_agreement": date_agreement, "existing_account": existing_account,
+          "date_required": date_required}
 
 
 # ------------------------------------------------------------------ derivations
@@ -113,7 +119,17 @@ def team_channels(ctx, goal, scope, employee, username):
             if c in chans:
                 chans.remove(c)
                 goal.flags.append({"kind": "correction", "detail": f"#{c} not added, per correction #{cor['id']}"})
+    words = {w for w in (employee.get("title", "") + " " + employee.get("team", "")).lower().split() if len(w) > 3}
+    mails = []
     for m in precedent.mail_instructions(ctx):
+        text = (m["subject"] + " " + m["excerpt"]).lower()
+        if m["trusted_sender"] and not any(w.rstrip("s") in text for w in words):
+            continue  # a trusted note about some other role doesn't apply to this hire
+        mails.append(m)
+    req = precedent.request_asks(ctx, scope.get("request", ""))
+    if req["candidates"]:
+        mails.append(req)
+    for m in mails:
         for cand in m["candidates"]:
             d = Delta("chat", "user", {"username": username}, {"role": "admin"}) if cand["kind"] == "role" else \
                 Delta("chat", "channel_member", {"channel": cand["value"], "user": username}, {"exists": True})
@@ -123,6 +139,17 @@ def team_channels(ctx, goal, scope, employee, username):
             if not policy.precedent_allowed(it.risk):
                 why.append(f"precedent may not authorize {it.risk} actions")
             why += [v["reason"] for v in policy.violations(it, employee)]
+            if m.get("from_request"):
+                why = [v["reason"] for v in policy.violations(it, employee)]
+                if it.risk == "elevated":
+                    why.append("elevated changes need an IT ticket, not an onboarding request")
+                if why:
+                    goal.flags.append({"kind": "refused_request", "detail": f"You asked for {cand['kind']} = {cand['value']}: not done. {'; '.join(why)}"})
+                elif cand["kind"] == "channel" and cand["value"] not in chans:
+                    chans.append(cand["value"])
+                    cites.append(Citation("request", f"#{cand['value']}", "asked for in the request"))
+                    scope.setdefault("_request_items", []).append(cand["value"])
+                continue
             if why:
                 goal.flags.append({"kind": "suspicious_instruction" if not m["trusted_sender"] else "precedent_rejected",
                                    "detail": f"Mail '{m['subject']}' from {m['sender']} asks for {cand['kind']} = {cand['value']}. "
@@ -131,14 +158,17 @@ def team_channels(ctx, goal, scope, employee, username):
                 chans.append(cand["value"])
                 cites.append(Citation("precedent:mail", f"#{cand['value']}", f"mail #{m['id']}: {m['excerpt'][:120]}"))
     scope["_cites"] += cites
-    scope["_precedent_items"] += chans
+    scope["_precedent_items"] += [c for c in chans if c not in scope.get("_request_items", [])]
     return chans
 
 
+DONE_CHANNELS = "\u27e8done_channels\u27e9"
+
+
 def join_channels(ctx, goal, scope, items):
-    allowed = [c for c in items if not policy.violations(Intent("", Delta("chat", "channel_member", {"channel": c, "user": "x"}, {"exists": True})),
-                                                           scope.get("employee"))]
-    return ", ".join(f"#{c}" for c in allowed) or "the team channels"
+    """Resolved at *execution* time from the channel steps that actually succeeded, so a welcome
+    message never announces access that failed or was declined."""
+    return DONE_CHANNELS
 
 
 def user_channels(ctx, goal, scope, username, exclude=("general",)):
@@ -148,12 +178,10 @@ def user_channels(ctx, goal, scope, username, exclude=("general",)):
     return chans
 
 
-def date_or_today(ctx, goal, scope, text=None, label="date"):
-    from rung.understand import resolve_date
-    d = resolve_date(text if text and not str(text).startswith("{") else None)
-    goal.gaps.append(Gap(label, d or now().astimezone().date().isoformat(), "resolved" if d else "default",
-                         "request" if d else "today (no date in the request)"))
-    return d or now().astimezone().date().isoformat()
+def request_date(ctx, goal, scope, label="date"):
+    d = scope.get("date")
+    goal.gaps.append(Gap(label, d, "resolved", f"request ('{scope.get('date_text')}')"))
+    return d
 
 
 def month_start(ctx, goal, scope):
@@ -178,10 +206,15 @@ def count(ctx, goal, scope, items):
     return len(items)
 
 
+def split_name(ctx, goal, scope, full_name, part="first"):
+    first, _, last = (full_name or "").partition(" ")
+    return first if part == "first" else last
+
+
 def requester(ctx, goal, scope):
     goal.gaps.append(Gap("recipient", goal.requester, "default", "the requester"))
     return goal.requester
 
 
-FNS = {f.__name__: f for f in [username_for, manager_of, team_channels, join_channels, user_channels, date_or_today,
-                              month_start, today, hr_query, format_rows, count, requester]}
+FNS = {f.__name__: f for f in [username_for, manager_of, team_channels, join_channels, user_channels, request_date,
+                              month_start, today, hr_query, format_rows, count, requester, split_name]}

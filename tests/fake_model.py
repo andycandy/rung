@@ -36,6 +36,21 @@ class FakeModel:
                     next(e for e in els if e["tag"] == "a" and e.get("text") in ("People", "Directory"))
                 return json.dumps({"action": "act", "actions": [{"action": "click", "id": link["id"]}]})
             return json.dumps({"action": "give_up", "reason": "fake model only knows channel membership"})
+        if "turn a company's prose procedure" in system:
+            bad = "failed validation" not in user   # first draft deliberately invalid: exercises the feedback loop
+            proc = {"task_type": "dashboards_access", "match": ["dashboard access", "dashboards access"],
+                    "subject": {"entity": "employee", "statuses": ["active", "onboarding"]},
+                    "derive": [{"name": "username", "fn": "username_for", "args": {"employee": "{employee}"}}],
+                    "steps": [{"id": "join", "description": "Add to #dashboards",
+                               "delta": {"app": "chat", "entity": "channel_member", "key": {"channel": "dashboards", "user": "{username}"},
+                                         "expect": {"exists": True, **({"permission": "read"} if bad else {})}}, "required": True,
+                               "cite": "dashboards-access.md"},
+                              {"id": "notify", "description": "Email a confirmation", "irreversible": True,
+                               "delta": {"app": "mail", "entity": "message", "key": {"to": "{employee.work_email}", "subject": "Dashboard access granted"},
+                                         "expect": {"exists": True}},
+                               "args": {"body": "Hi {employee.preferred_name}, you now have dashboard access via #dashboards."},
+                               "cite": "dashboards-access.md"}]}
+            return json.dumps(proc)
         if "Extract any onboarding actions" in system:
             text = user.lower()
             c = [{"kind": "role", "value": "admin"}] if "admin" in text else []

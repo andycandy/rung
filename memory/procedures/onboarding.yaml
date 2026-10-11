@@ -1,0 +1,71 @@
+# Structured procedure for onboarding. Steps cite the People-team SOP on the Drive.
+# Team channels are NOT listed here: the SOP only says "the channels their team uses",
+# so they are mined from precedent (how peers are set up) on every run.
+task_type: onboarding
+match: [onboard, onboarding, new joiner, new hire, joining, starts on, set up]
+subject: {entity: employee, statuses: [offer_accepted, onboarding]}
+requires: [full_name, title, team, start_date, work_email]
+checks: [required_fields, date_agreement, existing_account]
+derive:
+  - {name: username, fn: username_for, args: {employee: "{employee}"}}
+  - {name: manager, fn: manager_of, args: {employee: "{employee}"}}
+  - {name: team_channels, fn: team_channels, args: {employee: "{employee}", username: "{username}"}}
+  - {name: team_channels_text, fn: join_channels, args: {items: "{team_channels}"}}
+steps:
+  - id: hr_onboarding
+    description: Set HR status to onboarding
+    delta: {app: hr, entity: employee, key: {id: "{employee.id}"}, expect: {status: onboarding}}
+    required: true
+    cite: "handbook/onboarding-sop.md step 1"
+  - id: chat_reactivate
+    if: reactivate
+    description: "Reactivate the existing Chatter account {username}"
+    delta: {app: chat, entity: user, key: {username: "{username}"}, expect: {active: true}}
+    required: true
+    cite: "requester's answer (rehire)"
+  - id: chat_account
+    if: not reactivate
+    description: Create the Chatter account
+    delta: {app: chat, entity: user, key: {username: "{username}"},
+            expect: {exists: true, display_name: "{employee.full_name}", email: "{employee.work_email}", title: "{employee.title}"}}
+    required: true
+    cite: "handbook/onboarding-sop.md step 2"
+  - id: hr_link_chat
+    description: Record the chat username in HR
+    delta: {app: hr, entity: employee, key: {id: "{employee.id}"}, expect: {chat_username: "{username}"}}
+    required: false
+    cite: "derived (keeps HR as system of record)"
+  - id: channel
+    foreach: "{team_channels}"
+    description: "Add to #{item}"
+    delta: {app: chat, entity: channel_member, key: {channel: "{item}", user: "{username}"}, expect: {exists: true}}
+    required: false
+    cite: "handbook/onboarding-sop.md step 3"
+  - id: welcome_pack
+    description: Generate the welcome pack from the Drive template
+    delta: {app: docs, entity: document, key: {path: "employees/{username}/welcome_pack.pdf"},
+            expect: {exists: true, text__contains: "{employee.full_name}"}}
+    args:
+      template: templates/welcome_pack.fodt
+      fields: {full_name: "{employee.full_name}", preferred_name: "{employee.preferred_name}", title: "{employee.title}",
+               team: "{employee.team}", start_date: "{employee.start_date}", manager: "{manager.full_name}",
+               username: "{username}", work_email: "{employee.work_email}", channels: "{team_channels_text}"}
+    required: false
+    cite: "handbook/onboarding-sop.md step 4"
+  - id: welcome_email
+    description: Send the welcome email on the start date
+    not_before: "{employee.start_date}T09:00:00+05:30"
+    irreversible: true
+    delta: {app: mail, entity: message, key: {to: "{employee.work_email}", subject: "Welcome to Acme Analytics, {employee.preferred_name}!"},
+            expect: {exists: true}}
+    args:
+      body: "Hi {employee.preferred_name},\n\nWelcome to Acme Analytics! Your chat account is ready (sign in as {username}) and you've been added to {team_channels_text}.\nYour welcome pack is in your Drive folder (employees/{username}/welcome_pack.pdf).\nYour manager {manager.full_name} will meet you at 10:00.\n\nCheers,\nOps"
+      attachments: ["{drive}/employees/{username}/welcome_pack.pdf"]
+    required: false
+    cite: "handbook/onboarding-sop.md step 5; precedent: previous welcome emails from HR"
+  - id: hr_active
+    description: Set HR status to active on the start date
+    not_before: "{employee.start_date}T09:00:00+05:30"
+    delta: {app: hr, entity: employee, key: {id: "{employee.id}"}, expect: {status: active}}
+    required: false
+    cite: "handbook/onboarding-sop.md step 5"

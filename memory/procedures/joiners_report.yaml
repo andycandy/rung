@@ -1,0 +1,29 @@
+# A read-heavy reporting task (different family): HR query -> PDF via LibreOffice -> email.
+task_type: joiners_report
+match: [who joined, joiners, new joiners report, headcount, report]
+subject: {entity: none}
+derive:
+  - {name: month_start, fn: month_start}
+  - {name: today, fn: today}
+  - {name: tomorrow, fn: today, args: {offset_days: 1}}
+  - {name: recipient, fn: requester}
+  - {name: joined, fn: hr_query, args: {label: joined_this_month, start_after: "{month_start}", start_before: "{today}"}}
+  - {name: upcoming, fn: hr_query, args: {label: starting_soon, start_after: "{tomorrow}"}}
+  - {name: joined_text, fn: format_rows, args: {items: "{joined}", fmt: "{full_name} - {title} ({team}), started {start_date}", empty: "Nobody yet."}}
+  - {name: upcoming_text, fn: format_rows, args: {items: "{upcoming}", fmt: "{full_name} - {title} ({team}), starts {start_date}, status {status}"}}
+steps:
+  - id: render
+    description: Render the joiners report PDF from the Drive template
+    delta: {app: docs, entity: document, key: {path: "reports/joiners-{month_start}.pdf"}, expect: {exists: true, text__contains: "Joiners report"}}
+    args:
+      template: templates/report.fodt
+      fields: {title: "Joiners report {month_start} to {today}", section1: "Joined this month", body1: "{joined_text}", section2: "Starting soon", body2: "{upcoming_text}"}
+    cite: "requester asked for a PDF"
+  - id: send
+    description: Email the report to the requester
+    irreversible: true
+    delta: {app: mail, entity: message, key: {to: "{recipient}", subject: "Joiners report {month_start} to {today}"}, expect: {exists: true}}
+    args:
+      body: "Hi,\n\nAttached is the joiners report.\n\nJoined this month:\n{joined_text}\n\nStarting soon:\n{upcoming_text}\n\nOps"
+      attachments: ["{drive}/reports/joiners-{month_start}.pdf"]
+    cite: "requester asked for it"

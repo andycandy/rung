@@ -1,0 +1,29 @@
+# Written company policy -- the highest-trust source. Precedent can suggest steps;
+# it can never grant what this file does not allow.
+
+risk:                      # first match wins; default reversible_write
+  - when: {app: chat, entity: user, field: role}
+    risk: elevated
+  - when: {app: mail, entity: message}
+    risk: irreversible
+  - when: {app: hr, entity: employee, field: status, value: terminated}
+    risk: irreversible
+
+gates:                     # what each risk class needs
+  read: auto
+  reversible_write: auto
+  irreversible: auto_if_procedure   # planned by a confirmed procedure -> ok; otherwise ask
+  elevated: approve
+
+precedent_max_risk: reversible_write   # anything riskier suggested by precedent is dropped and flagged
+
+trusted_mail_domains: [acme.test]
+
+rules:
+  - id: FP-2
+    deny: {app: chat, entity: channel_member, channel: finance-private}
+    unless: {subject_team: Finance}
+    reason: "#finance-private is restricted to the Finance team (Finance data policy FP-2)."
+  - id: IT-7
+    deny: {app: chat, entity: user, expect_role: admin}
+    reason: "Workspace admin rights are granted only by IT through a ticket (IT policy IT-7)."

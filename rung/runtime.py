@@ -1,0 +1,228 @@
+"""Run model: understand -> ask (batched) -> confirm -> execute as a saga -> verify -> report.
+
+States: planned -> running -> (waiting_input | scheduled) -> running -> done | partial | compensated | escalated
+  * checkpoint after every verified intent; a crashed run resumes where it stopped
+    (precondition probes make re-execution idempotent)
+  * a failed *required* intent triggers compensation of completed reversible
+    intents in reverse order; if anything irreversible already happened, escalate
+  * intents with not_before are parked; `tick` wakes them on time
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+from dataclasses import asdict
+from datetime import datetime
+
+from rung import ladder, policy, report, store
+from rung.apps import registry
+from rung.ctx import Ctx
+from rung.types import Gap, GoalSpec, Intent
+from rung.understand import understand
+from sandbox.common import now
+
+MAX_ASK_ROUNDS = 3
+
+
+class Crash(Exception):
+    """Injected crash (eval): simulates the process dying mid-run."""
+
+
+def save_goal(rid, goal: GoalSpec):
+    store.set_run(rid, goal=goal.to_json())
+
+
+def load_goal(rid) -> GoalSpec:
+    d = json.loads(store.get_run(rid)["goal"])
+    g = GoalSpec(**{k: v for k, v in d.items() if k not in ("intents", "gaps")})
+    g.gaps = [Gap(**x) for x in d["gaps"]]
+    g.intents = [Intent.from_dict(x) for x in d["intents"]]
+    return g
+
+
+def _ask(ctx, kind, question, options=None):
+    ans = ctx.approver(kind, question, options or []) if ctx.approver else None
+    ctx.log("human.ask", {"kind": kind, "question": question, "answer": ans})
+    return ans
+
+
+def start(request: str, requester: str, approver=None, model=None, answers: dict | None = None) -> str:
+    rid = store.new_run(request, requester)
+    ctx = Ctx(rid, model=model, approver=approver)
+    try:
+        answers = dict(answers or {})
+        for _ in range(MAX_ASK_ROUNDS):
+            goal = understand(ctx, request, requester, answers)
+            if not goal.questions:
+                break
+            # ask budget: one batched message, only what context couldn't answer
+            got = False
+            for q in goal.questions:
+                a = _ask(ctx, "question", q["q"])
+                if a:
+                    answers[q["key"]] = a
+                    got = True
+            if not got:
+                break
+        save_goal(rid, goal)
+        ctx.log("understand.goal", {"task_type": goal.task_type, "gaps": [asdict(g) for g in goal.gaps],
+                                    "flags": goal.flags, "questions": goal.questions,
+                                    "intents": [{"d": i.description, "delta": i.delta.describe(), "risk": i.risk, "origin": i.origin,
+                                                 "status": i.status, "not_before": i.not_before} for i in goal.intents]})
+        if goal.questions:
+            store.set_run(rid, state="waiting_input")
+            store.set_run(rid, report=report.write(rid, goal, ctx))
+            return rid
+        confirm_precedent(ctx, goal)
+        save_goal(rid, goal)
+        execute(ctx, goal)
+    finally:
+        ctx.close()
+    return rid
+
+
+def confirm_precedent(ctx, goal: GoalSpec):
+    """First use of a precedent-only step: one batched confirmation, remembered afterwards."""
+    pending = [i for i in goal.intents if i.needs_confirmation and i.status == "pending"]
+    if not pending:
+        return
+    lines = "\n".join(f"  - {i.description}  [{'; '.join(c.quote for c in i.citations if c.source.startswith('precedent'))[:140]}]" for i in pending)
+    a = _ask(ctx, "confirm", f"These steps come from how things were done before, not from a written procedure:\n{lines}\nGo ahead? (yes / no / comma-separated items to skip)")
+    a = (a or "no").strip().lower()
+    for i in pending:
+        skip = a == "no" or (a not in ("yes", "y") and i.delta.key.get("channel", "~") in [x.strip().lstrip("#") for x in a.split(",")])
+        if skip:
+            i.status = "skipped"
+            i.result["why"] = "declined by requester"
+        else:
+            i.needs_confirmation = False
+            store.put_confirmation(i.result["confirm_key"], "yes")
+
+
+def _unintended(app, delta, before, after) -> list[str]:
+    spec = app.projection.get(delta.entity, {})
+    if not before or not after:
+        return []
+    out = []
+    for f in spec.get("compare", []):
+        if f in delta.expect or f == "exists":
+            continue
+        if before.get(f) != after.get(f):
+            out.append(f"{f}: {before.get(f)!r} -> {after.get(f)!r}")
+    return out
+
+
+def execute(ctx, goal: GoalSpec):
+    rid = ctx.rid
+    store.set_run(rid, state="running")
+    crash_after = int(os.environ.get("RUNG_CRASH_AFTER", "0"))
+    done_now = 0
+    failed_required = None
+    for it in goal.intents:
+        if it.status in ("done", "skipped", "blocked", "compensated", "failed"):
+            continue
+        if it.not_before and now() < datetime.fromisoformat(it.not_before):
+            it.status = "scheduled"
+            continue
+        if policy.gate(it) == "approve":
+            a = _ask(ctx, "approve", f"Approval needed ({it.risk}): {it.description} -> {it.delta.describe()}", ["approve", "deny"])
+            if (a or "").lower() not in ("approve", "yes", "y"):
+                it.status = "skipped"
+                it.result["why"] = "approval denied or not given"
+                save_goal(rid, goal)
+                continue
+        if crash_after and done_now >= crash_after:
+            save_goal(rid, goal)
+            store.set_run(rid, state="running")
+            ctx.log("run.crash_injected", {"after": done_now})
+            raise Crash(f"injected crash after {done_now} intents")
+        it.status = "running"
+        save_goal(rid, goal)
+        ctx.log("step.start", {"intent": it.id, "description": it.description, "delta": it.delta.describe(), "risk": it.risk})
+        t0 = time.time()
+        try:
+            res = ladder.ensure(ctx, it.delta, it.args)
+        except Exception as ex:  # noqa: BLE001
+            from rung.types import ExecResult
+            res = ExecResult(ok=False, rung="error", detail=f"{type(ex).__name__}: {ex}", data={})
+        app = registry.get(it.delta.app)
+        it.result.update({"rung": res.rung, "label": res.data.get("label"), "ms": int((time.time() - t0) * 1000),
+                          "attempts": res.data.get("attempts", []), "detail": res.detail,
+                          "before": res.data.get("before"), "unintended": _unintended(app, it.delta, res.data.get("before"), res.data.get("after"))})
+        if res.data.get("screenshot"):
+            it.result["screenshot"] = res.data["screenshot"]
+        it.status = "done" if res.ok else "failed"
+        ctx.log("step.end", {"intent": it.id, "ok": res.ok, "rung": res.rung, "label": it.result["label"], "attempts": it.result["attempts"]})
+        save_goal(rid, goal)
+        done_now += 1
+        if not res.ok and it.result.get("required"):
+            failed_required = it
+            break
+    if failed_required:
+        compensate(ctx, goal, failed_required)
+    else:
+        sched = [i for i in goal.intents if i.status == "scheduled"]
+        if sched:
+            store.set_run(rid, state="scheduled", wake_at=min(i.not_before for i in sched))
+        elif any(i.status == "failed" for i in goal.intents):
+            store.set_run(rid, state="partial")
+        else:
+            store.set_run(rid, state="done")
+    save_goal(rid, goal)
+    store.set_run(rid, report=report.write(rid, goal, ctx))
+
+
+def compensate(ctx, goal: GoalSpec, failed: Intent):
+    done = [i for i in goal.intents if i.status == "done" and i.result.get("rung") != "noop:already-satisfied"]
+    irreversible = [i for i in done if i.irreversible]
+    if irreversible:
+        goal.flags.append({"kind": "escalation", "detail": f"'{failed.description}' failed after irreversible steps "
+                                                           f"({', '.join(i.description for i in irreversible)}); not undoing anything automatically."})
+        store.set_run(ctx.rid, state="escalated")
+        return
+    ctx.log("saga.compensate", {"failed": failed.description, "undo": [i.description for i in reversed(done)]})
+    ok_all = True
+    for i in reversed(done):
+        app = registry.get(i.delta.app)
+        inv = app.inverse(i.delta, i.result.get("before"))
+        if inv is None:
+            ok_all = False
+            continue
+        r = ladder.ensure(ctx, inv)
+        i.status = "compensated" if r.ok else "done"
+        i.result["compensation"] = {"delta": inv.describe(), "ok": r.ok, "rung": r.rung}
+        ok_all &= r.ok
+    for i in goal.intents:
+        if i.status in ("pending", "scheduled"):
+            i.status = "skipped"
+            i.result["why"] = "run compensated"
+    goal.flags.append({"kind": "compensated" if ok_all else "escalation",
+                       "detail": f"'{failed.description}' failed; completed steps were " + ("undone." if ok_all else "partly undone - needs a human.")})
+    store.set_run(ctx.rid, state="compensated" if ok_all else "escalated")
+
+
+def resume(rid: str, approver=None, model=None):
+    goal = load_goal(rid)
+    ctx = Ctx(rid, model=model, approver=approver)
+    ctx.log("run.resumed", {"state": store.get_run(rid)["state"]})
+    try:
+        for it in goal.intents:
+            if it.status in ("running", "scheduled"):
+                it.status = "pending"  # re-check with precondition probes; idempotent
+        execute(ctx, goal)
+    finally:
+        ctx.close()
+    return rid
+
+
+def tick(approver=None, model=None) -> list[str]:
+    woke = []
+    for r in store.list_runs("scheduled"):
+        if r["wake_at"] and now() >= datetime.fromisoformat(r["wake_at"]):
+            resume(r["id"], approver, model)
+            woke.append(r["id"])
+    for r in store.list_runs("running"):  # crashed runs
+        resume(r["id"], approver, model)
+        woke.append(r["id"])
+    return woke

@@ -1,0 +1,39 @@
+# Offboarding -- added as data only (no code changes): it composes the same
+# library checks/derivations and the same apps as onboarding.
+task_type: offboarding
+match: [offboard, offboarding, leaving, last day, leaves, deactivate, exit]
+subject: {entity: employee, statuses: [active, onboarding]}
+requires: [full_name, work_email]
+derive:
+  - {name: username, fn: username_for, args: {employee: "{employee}"}}
+  - {name: manager, fn: manager_of, args: {employee: "{employee}"}}
+  - {name: last_day, fn: date_or_today, args: {text: "{date_text}", label: last_day}}
+  - {name: channels, fn: user_channels, args: {username: "{username}"}}
+steps:
+  - id: remove_channels
+    foreach: "{channels}"
+    description: "Remove from #{item}"
+    delta: {app: chat, entity: channel_member, key: {channel: "{item}", user: "{username}"}, expect: {exists: false}}
+    required: false
+    cite: "least-privilege: leavers keep no channel access"
+  - id: chat_deactivate
+    description: Deactivate the Chatter account
+    not_before: "{last_day}T18:00:00+05:30"
+    delta: {app: chat, entity: user, key: {username: "{username}"}, expect: {active: false}}
+    required: true
+    cite: "IT offboarding checklist"
+  - id: hr_terminated
+    description: Set HR status to terminated
+    not_before: "{last_day}T18:00:00+05:30"
+    irreversible: true
+    delta: {app: hr, entity: employee, key: {id: "{employee.id}"}, expect: {status: terminated}}
+    required: true
+    cite: "HR records policy"
+  - id: notify_manager
+    description: Tell the manager it's done
+    not_before: "{last_day}T18:00:00+05:30"
+    irreversible: true
+    delta: {app: mail, entity: message, key: {to: "{manager.work_email}", subject: "Offboarding complete: {employee.full_name}"}, expect: {exists: true}}
+    args:
+      body: "Hi {manager.full_name},\n\n{employee.full_name}'s access has been removed: Chatter account deactivated and channel memberships removed; PeopleHub status set to terminated (last day {last_day}).\n\nOps"
+    cite: "IT offboarding checklist"

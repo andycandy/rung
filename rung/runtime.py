@@ -163,7 +163,12 @@ def execute(ctx, goal: GoalSpec):
         compensate(ctx, goal, failed_required)
     else:
         sched = [i for i in goal.intents if i.status == "scheduled"]
-        if sched:
+        failed = [i for i in goal.intents if i.status == "failed"]
+        if failed and not any(f.get("kind") == "partial" for f in goal.flags):
+            goal.flags.append({"kind": "partial", "detail": "Not done: " + "; ".join(f"{i.description} ({i.result.get('detail') or 'failed'})" for i in failed)})
+        if sched and failed:
+            store.set_run(rid, state="scheduled_partial", wake_at=min(i.not_before for i in sched))
+        elif sched:
             store.set_run(rid, state="scheduled", wake_at=min(i.not_before for i in sched))
         elif any(i.status == "failed" for i in goal.intents):
             store.set_run(rid, state="partial")
@@ -218,7 +223,7 @@ def resume(rid: str, approver=None, model=None):
 
 def tick(approver=None, model=None) -> list[str]:
     woke = []
-    for r in store.list_runs("scheduled"):
+    for r in store.list_runs("scheduled") + store.list_runs("scheduled_partial"):
         if r["wake_at"] and now() >= datetime.fromisoformat(r["wake_at"]):
             resume(r["id"], approver, model)
             woke.append(r["id"])

@@ -21,7 +21,7 @@ trusted_mail_domains: [acme.test]
 
 rules:
   - id: FP-2
-    deny: {app: chat, entity: channel_member, channel: finance-private}
+    deny: {app: chat, entity: channel_member, channel: finance-private, expect_exists: true}   # granting access; removal is always allowed
     unless: {subject_team: Finance}
     reason: "#finance-private is restricted to the Finance team (Finance data policy FP-2)."
   - id: IT-7

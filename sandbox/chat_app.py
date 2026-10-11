@@ -120,6 +120,8 @@ def api_create_user(v):
         me = _api_user(con, write=True)
         if not _can_manage(me):
             abort(403)
+        if flags().get("chat_signup_disabled"):
+            return jsonify({"error": "account creation is temporarily disabled (seat limit reached)"}), 503
         b = request.get_json(force=True)
         if not b.get("username") or not b.get("display_name"):
             return jsonify({"error": "username and display_name are required"}), 400

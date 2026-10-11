@@ -65,6 +65,15 @@ def mail_instructions(ctx) -> list[dict]:
             cands.append({"kind": "role", "value": "admin"})
         for c in CHANNEL_RE.findall(text.lower()):
             cands.append({"kind": "channel", "value": c})
+        if ctx.model:  # the model reads the text as data and lists what it asks for; the guard decides
+            try:
+                from rung.llm.calls import extract_instructions
+                ctx.stats["llm_calls"] += 1
+                for c in extract_instructions(ctx.model, text):
+                    if c["kind"] in ("channel", "role") and c not in cands:
+                        cands.append({"kind": c["kind"], "value": c["value"].lstrip("#").lower() if c["kind"] == "channel" else "admin"})
+            except Exception as ex:  # noqa: BLE001
+                ctx.log("llm.error", {"call": "extract_instructions", "error": str(ex)})
         out.append({"id": m["id"], "sender": m["sender"], "subject": m["subject"], "trusted_sender": policy.trusted_sender(m["sender"]),
                     "excerpt": m["body"][:300], "candidates": cands})
     return out

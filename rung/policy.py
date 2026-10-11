@@ -43,6 +43,8 @@ def violations(intent: Intent, subject: dict) -> list[dict]:
             continue
         if "channel" in deny and str(d.key.get("channel", "")).lstrip("#").lower() != deny["channel"]:
             continue
+        if "expect_exists" in deny and d.expect.get("exists") != deny["expect_exists"]:
+            continue
         if "expect_role" in deny and d.expect.get("role") != deny["expect_role"]:
             continue
         unless = rule.get("unless", {})

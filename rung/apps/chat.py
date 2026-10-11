@@ -139,7 +139,17 @@ class ChatApp(App):
         tag = f"explore-{secrets.token_hex(3)}"
         ab.start_recording(tag)
         t0 = time.time()
-        tr = explorer.run(ab, delta, self.values(delta, args))
+        try:
+            tr = explorer.run(ab, delta, self.values(delta, args))
+        except Exception as ex:  # noqa: BLE001 -- model unavailable/invalid: fall back to the offline policy
+            ctx.log("llm.error", {"call": "explore_step", "error": str(ex)})
+            explorer = HeuristicExplorer()
+            tr = explorer.run(ab, delta, self.values(delta, args))
+        if tr.gave_up and isinstance(explorer, LLMExplorer):
+            ctx.log("explore.fallback", {"from": explorer.name, "reason": tr.gave_up})
+            ctx.stats["llm_calls"] += tr.llm_calls
+            explorer = HeuristicExplorer()
+            tr = explorer.run(ab, delta, self.values(delta, args))
         rec = ab.stop_recording()
         shot = ab.screenshot(f"{delta.entity}-{tag}")
         ctx.stats["explore_steps"] += 1

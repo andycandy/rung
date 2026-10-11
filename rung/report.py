@@ -55,6 +55,7 @@ def write(rid, goal, ctx) -> str:
     st = ctx.stats
     L += ["## Cost", f"- LLM calls: {st['llm_calls']}  |  explored (UI) steps: {st['explore_steps']}  |  compiled steps: {st['compiled_steps']}"
           f"  |  wall time: {time.time() - st['t0']:.1f}s", "", f"Full event log: `python -m rung events {rid}`"]
+    store.event(rid, "run.stats", {k: (v if k != "t0" else round(time.time() - v, 2)) for k, v in st.items()})
     md = "\n".join(L)
     (store.artifacts_dir(rid) / "report.md").write_text(md)
     return md

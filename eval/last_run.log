@@ -1,22 +1,26 @@
-[PASS] A1 cold onboarding (explores Chatter UI, learns its API)  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 7, 'wall_s': 19.3}
+[PASS] A1 cold onboarding (explores Chatter UI, learns its API)  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 7, 'wall_s': 18.8}
+[PASS] A1b same request again (still onboarding): every immediate step is a verified no-op  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 3.7}
 [PASS] A2 ambiguous name -> asks once (two pending Karans)  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.1}
-[PASS] A3 warm onboarding after the answer (uses learned API, no browser for writes)  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 7, 'wall_s': 5.9}
-[PASS] A4 scheduled start-date steps fire on Monday  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 9, 'wall_s': 19.7}
-[PASS] A5 re-running a finished request is a no-op  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.1}
-[PASS] B1 API moved (v1 -> 410): demote learned tools, re-explore, re-learn  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 6, 'wall_s': 19.2}
-[PASS] B2 expired session mid-flight: re-login, continue  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 8, 'wall_s': 6.5}
-[PASS] B3 crash after 3 steps -> resumed from checkpoint, nothing duplicated  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 5, 'wall_s': 2.6}
-[PASS] B4 required step fails (seat limit) -> saga undoes completed steps  state=compensated claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 1, 'compiled_steps': 2, 'wall_s': 6.4}
-[PASS] B5 UI redesign with no learned tools: explorer copes with new labels/ids  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 6, 'wall_s': 18.6}
-[PASS] B6 optional step impossible (#dashboards archived) -> partial, reported honestly  state=scheduled_partial claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 1, 'compiled_steps': 7, 'wall_s': 9.0}
+[PASS] A3 warm onboarding after the answer (uses learned API, no browser for writes)  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 7, 'wall_s': 5.6}
+[PASS] A4 scheduled start-date steps fire on Monday  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 9, 'wall_s': 19.2}
+[PASS] A5 request about someone already onboarded -> asks, does nothing  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.1}
+[PASS] A6 requester declines the precedent-based steps -> only written-procedure steps run  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 6, 'wall_s': 5.4}
+[PASS] B1 API moved (v1 -> 410): demote learned tools, re-explore, re-learn  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 6, 'wall_s': 18.8}
+[PASS] B2 expired session mid-flight: re-login, continue  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 8, 'wall_s': 6.1}
+[PASS] B3 crash after 3 steps -> resumed from checkpoint, nothing duplicated  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 5, 'wall_s': 2.2}
+[PASS] B3b crash right after a write, before its checkpoint -> resume re-checks state, no duplicate  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 6, 'wall_s': 2.7}
+[PASS] B4 required step fails (seat limit) -> saga undoes completed steps  state=compensated claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 1, 'compiled_steps': 2, 'wall_s': 6.2}
+[PASS] B5.2 UI redesign v2, no learned tools  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 6, 'wall_s': 18.6}
+[PASS] B5.3 UI redesign v3 (labels never seen while writing the explorer), no learned tools  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 6, 'wall_s': 18.4}
+[PASS] B6 optional step impossible (#dashboards archived) -> partial, reported honestly  state=scheduled_partial claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 2, 'compiled_steps': 7, 'wall_s': 11.8}
 [PASS] C1 rehire: existing deactivated account -> asks reactivate/new  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.2}
-[PASS] C2 rehire answered: same account reactivated, not duplicated  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 1, 'compiled_steps': 8, 'wall_s': 9.8}
-[PASS] C3 request date disagrees with HR -> asks instead of guessing  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.3}
+[PASS] C2 rehire answered: same account reactivated, not duplicated  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 1, 'compiled_steps': 8, 'wall_s': 9.4}
+[PASS] C3 request date disagrees with HR -> asks instead of guessing  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.2}
 [PASS] C4 no name in the request -> asks  state=waiting_input claimed=False false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 0.1}
-[PASS] C5 human correction (+#finance for analysts) applied on the next run  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 9, 'wall_s': 6.6}
-[PASS] C6 offboarding (added as YAML only): channels removed now, account + HR at end of day  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 8, 'wall_s': 2.2}
-[PASS] C7 reporting task (read-heavy, different family): HR -> LibreOffice PDF -> email  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 2, 'wall_s': 2.0}
-[PASS] C8 written policy vs precedent vs injected mail (from A1 report)  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 9, 'wall_s': 19.7}
-[PASS] D1 generated company (seed 7): onboard Dev Ghosh  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 7, 'wall_s': 19.8}
+[PASS] C5 human correction (+#finance for analysts) applied on the next run  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 9, 'wall_s': 6.8}
+[PASS] C6 offboarding (added as YAML only): channels removed now, account + HR at end of day  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 8, 'wall_s': 2.1}
+[PASS] C7 reporting task (read-heavy, different family): HR -> LibreOffice PDF -> email  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 0, 'compiled_steps': 2, 'wall_s': 1.9}
+[PASS] C8 written policy vs precedent vs injected mail (regex extraction + policy filter, from A1)  state=done claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 9, 'wall_s': 19.2}
+[PASS] D1 re-seeded company (seed 7: new names, same schema): onboard Dev Ghosh  state=scheduled claimed=True false_success=False {'llm_calls': 0, 'explore_steps': 4, 'compiled_steps': 7, 'wall_s': 19.2}
 
-20/20 cases passed, false-success claims: 0, total 135.3s
+24/24 cases passed, false-success claims: 0, total 168.5s

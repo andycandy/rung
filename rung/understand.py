@@ -21,9 +21,11 @@ from sandbox.common import DRIVE, now
 
 PROC_DIR = Path(__file__).resolve().parent.parent / "memory" / "procedures"
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-STOP = set(WEEKDAYS) | {"please", "hi", "hey", "the", "a", "our", "new", "can", "could", "you", "i", "we", "today", "tomorrow",
-                        "next", "this", "week", "thanks", "data", "analyst", "engineer", "team", "as", "joining", "starts", "start",
-                        "from", "on", "and", "her", "his", "their", "them", "send", "me", "list", "report", "pdf", "month"}
+MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+# generic English only; candidate name tokens are further filtered by whether PeopleHub knows them
+STOP = set(WEEKDAYS) | set(MONTHS) | {"please", "hi", "hey", "hello", "the", "a", "an", "our", "can", "could", "would", "you", "i",
+                                      "we", "she", "he", "they", "her", "his", "their", "them", "today", "tomorrow", "next", "this",
+                                      "thanks", "thank", "and", "also"}
 
 
 def procedures() -> dict:
@@ -39,8 +41,12 @@ def extract(ctx, request: str) -> dict:
         out = resolve_goal(ctx.model, request, {k: v.get("match", []) for k, v in procs.items()})
         return out.model_dump()
     low = request.lower()
-    scores = {k: sum(1 for m in p.get("match", []) if m in low) for k, p in procs.items()}
-    task = max(scores, key=scores.get) if any(scores.values()) else None
+    scores = {k: sum(1 for m in p.get("match", []) if re.search(rf"\b{re.escape(m)}\b", low)) for k, p in procs.items()}
+    top = max(scores.values()) if scores else 0
+    winners = [k for k, v in scores.items() if v == top and v > 0]
+    task = winners[0] if len(winners) == 1 else None
+    if len(winners) > 1:
+        return {"task_type": None, "ambiguous": winners, "person": None, "date_text": None, "notes": ""}
     names = [w for w in re.findall(r"\b[A-Z][a-z]+\b", request) if w.lower() not in STOP and
              w.lower() not in {m for p in procs.values() for mm in p.get("match", []) for m in mm.split()}]
     return {"task_type": task, "person": " ".join(names) or None, "date_text": _date_text(low), "notes": ""}
@@ -76,6 +82,9 @@ def resolve_subject(ctx, proc: dict, person: str | None, answers: dict) -> tuple
     statuses = proc["subject"].get("statuses")
     if answers.get("subject"):
         emp = hr.probe(ctx, "employee", {"id": int(answers["subject"])})[0]
+        if not emp or (statuses and emp["status"] not in statuses):
+            return None, [Gap("subject", None, "ask", question=f"PeopleHub #{answers['subject']} isn't someone this task applies to "
+                                                               f"(needs status {statuses}). Who did you mean?")]
         return emp, [Gap("subject", emp["full_name"], "resolved", f"answer from requester (PeopleHub #{emp['id']})")]
     if not person:
         return None, [Gap("subject", None, "ask", question="Who is this for? I couldn't find a name in the request.")]
@@ -130,9 +139,17 @@ def render(obj, scope: Scope):
 # ------------------------------------------------------------------ main entry
 def understand(ctx, request: str, requester: str, answers: dict | None = None) -> GoalSpec:
     answers = answers or {}
-    ex = extract(ctx, request)
+    if answers.get("task_type"):
+        ex = extract(ctx, request)
+        ex["task_type"], ex["ambiguous"] = answers["task_type"], None
+    else:
+        ex = extract(ctx, request)
     ctx.log("understand.extract", ex)
     procs = procedures()
+    if ex.get("ambiguous"):
+        g = GoalSpec(request, requester, "unknown")
+        g.questions.append({"key": "task_type", "q": f"This could be any of: {', '.join(ex['ambiguous'])}. Which one did you mean?"})
+        return g
     if not ex.get("task_type") or ex["task_type"] not in procs:
         g = GoalSpec(request, requester, "unknown")
         g.questions.append({"key": "task_type", "q": f"I don't have a procedure for this yet. Known tasks: {', '.join(procs)}. "

@@ -225,6 +225,10 @@ LABELS = {
         "email": "Work email", "title": "Role / title", "submit": "Send invite", "add_channel": "Join channel",
         "add_btn": "Join", "remove": "Leave", "deactivate": "Suspend user", "reactivate": "Restore user",
         "make_admin": "Grant admin rights", "search": "Find", "channels": "Rooms"},
+    3: {"people": "Members", "invite": "Add member", "full_name": "Display name", "username": "User ID",
+        "email": "Email address", "title": "Position", "submit": "Save", "add_channel": "Space",
+        "add_btn": "Add", "remove": "Remove from", "deactivate": "Disable account", "reactivate": "Enable account",
+        "make_admin": "Admin", "search": "Search", "channels": "Spaces"},
 }
 
 
@@ -233,7 +237,8 @@ def _L():
 
 
 def _rid(name):  # variant 2 also scrambles element ids so CSS selectors break
-    return name if int(flags().get("chat_ui_variant", 1)) == 1 else f"x{abs(hash(name)) % 9973}"
+    v = int(flags().get("chat_ui_variant", 1))
+    return name if v == 1 else f"x{v}{abs(hash(name)) % 9973}"
 
 
 JS_COMMON = """
@@ -254,7 +259,7 @@ def page(title, body, js=""):
     L = _L()
     nav = (f"<nav aria-label='Main'><a href='/'>{L['channels']}</a> | <a href='/people'>{L['people']}</a> | "
            f"<a href='/search'>{L['search']}</a></nav>")
-    if int(flags().get("chat_ui_variant", 1)) == 2:
+    if int(flags().get("chat_ui_variant", 1)) >= 2:
         nav = f"<header><strong>Chatter</strong></header><aside>{nav}</aside>"
     html = (f"<!doctype html><html><head><title>{title} - Chatter</title></head><body>{nav}"
             f"<div id='flash'></div><main><h1>{title}</h1>{body}</main>"
@@ -351,6 +356,8 @@ def invite():
     order = ["full_name", "username", "email", "title"]
     if int(flags().get("chat_ui_variant", 1)) == 2:
         order = ["email", "full_name", "title", "username"]
+    if int(flags().get("chat_ui_variant", 1)) == 3:
+        order = ["title", "username", "full_name", "email"]
     fields = "".join(f"<p><label for='{_rid(f)}'>{L[f]}</label> <input id='{_rid(f)}' name='{_rid(f)}'></p>" for f in order)
     body = f"<form id='{_rid('invite')}'>{fields}<button type='submit'>{L['submit']}</button></form>"
     js = f"""

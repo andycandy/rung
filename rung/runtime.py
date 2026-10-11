@@ -117,6 +117,8 @@ def execute(ctx, goal: GoalSpec):
     rid = ctx.rid
     store.set_run(rid, state="running")
     crash_after = int(os.environ.get("RUNG_CRASH_AFTER", "0"))
+    crash_mid = int(os.environ.get("RUNG_CRASH_MID", "0"))
+    store.set_run(rid, owner=os.getpid())
     done_now = 0
     failed_required = None
     for it in goal.intents:
@@ -128,8 +130,13 @@ def execute(ctx, goal: GoalSpec):
         if policy.gate(it) == "approve":
             a = _ask(ctx, "approve", f"Approval needed ({it.risk}): {it.description} -> {it.delta.describe()}", ["approve", "deny"])
             if (a or "").lower() not in ("approve", "yes", "y"):
-                it.status = "skipped"
                 it.result["why"] = "approval denied or not given"
+                if it.result.get("required"):
+                    it.status = "failed"   # a required step that can't run fails the run (and triggers the saga)
+                    save_goal(rid, goal)
+                    failed_required = it
+                    break
+                it.status = "skipped"
                 save_goal(rid, goal)
                 continue
         if crash_after and done_now >= crash_after:
@@ -152,11 +159,17 @@ def execute(ctx, goal: GoalSpec):
                           "before": res.data.get("before"), "unintended": _unintended(app, it.delta, res.data.get("before"), res.data.get("after"))})
         if res.data.get("screenshot"):
             it.result["screenshot"] = res.data["screenshot"]
+        if crash_mid and done_now + 1 >= crash_mid:
+            ctx.log("run.crash_injected", {"after_write_before_checkpoint": it.description})
+            raise Crash("injected crash after a write, before its checkpoint")
         it.status = "done" if res.ok else "failed"
+        if res.ok and it.result["unintended"]:
+            it.status = "failed"   # the expected change happened, but something else changed too
+            it.result["detail"] = "unintended change: " + "; ".join(it.result["unintended"])
         ctx.log("step.end", {"intent": it.id, "ok": res.ok, "rung": res.rung, "label": it.result["label"], "attempts": it.result["attempts"]})
         save_goal(rid, goal)
         done_now += 1
-        if not res.ok and it.result.get("required"):
+        if it.status == "failed" and it.result.get("required"):
             failed_required = it
             break
     if failed_required:
@@ -221,13 +234,23 @@ def resume(rid: str, approver=None, model=None):
     return rid
 
 
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def tick(approver=None, model=None) -> list[str]:
     woke = []
     for r in store.list_runs("scheduled") + store.list_runs("scheduled_partial"):
         if r["wake_at"] and now() >= datetime.fromisoformat(r["wake_at"]):
             resume(r["id"], approver, model)
             woke.append(r["id"])
-    for r in store.list_runs("running"):  # crashed runs
+    for r in store.list_runs("running"):  # crashed runs: only if the owning process is gone (lease)
+        if r.get("owner") and _alive(int(r["owner"])) and int(r["owner"]) != os.getpid():
+            continue
         resume(r["id"], approver, model)
         woke.append(r["id"])
     return woke

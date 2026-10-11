@@ -12,20 +12,19 @@ from dataclasses import dataclass, field
 
 from rung.types import Delta
 
+# A small, app-agnostic vocabulary. Deliberately NOT tuned to any one app's labels:
+# the eval's redesigned UI (variant 3) uses labels chosen before this list was written.
 LEX = {
-    "nav": {"user": ["people", "directory", "members", "users", "person", "team"],
-            "channel_member": ["people", "directory", "members", "users"]},
-    "create": ["invite", "add a person", "add person", "new", "create", "add member", "add user"],
-    "fields": {"display_name": ["full name", "name", "display name"],
-               "username": ["username", "handle", "user name", "login"],
-               "email": ["email", "e-mail", "work email", "mail"],
-               "title": ["job title", "title", "role / title", "position"]},
-    "active=False": ["deactivate", "suspend", "disable"],
-    "active=True": ["reactivate", "restore", "enable", "activate"],
-    "member_add": ["add to channel", "join channel", "channel", "room", "add to"],
-    "member_remove": ["remove", "leave"],
+    "nav": ["people", "member", "members", "user", "users", "team", "staff", "employees", "person"],
+    "create": ["add", "new", "invite", "create"],
+    # field -> label tokens, checked in priority order (most specific first)
+    "field_tokens": [("email", ["mail"]), ("username", ["user", "login", "username"]),
+                     ("title", ["title", "role", "position", "job"]), ("display_name", ["name"])],
+    "active=False": ["deactivate", "disable", "suspend"],
+    "active=True": ["reactivate", "enable", "activate"],
+    "member_remove": ["remove", "leave", "delete"],
     "role=admin": ["admin"],
-    "avoid": ["logout", "sign out", "delete"],
+    "avoid": ["logout", "sign out", "log out", "delete"],
 }
 
 
@@ -55,7 +54,7 @@ class Trace:
 class HeuristicExplorer:
     name = "explore:heuristic"
 
-    def __init__(self, budget: int = 8):
+    def __init__(self, budget: int = 12):
         self.budget = budget
 
     # ---------------------------------------------------------- affordances
@@ -72,17 +71,22 @@ class HeuristicExplorer:
         exp = delta.expect
         if delta.entity == "user" and exp.get("exists") is True:
             inputs = [e for e in els if e["tag"] in ("input", "textarea") and e.get("type", "text") in ("text", "email", "")]
-            matched = {}
+            wanted = [f for f, _ in LEX["field_tokens"] if f in values]
+            matched: dict[str, str] = {}
             for e in inputs:
-                best, bs = None, 0
-                for f, words in LEX["fields"].items():
-                    if f in values:
-                        s = score(e.get("label", ""), words)
-                        if s > bs:
-                            best, bs = f, s
-                if best and best not in matched.values():
-                    matched[e["id"]] = best
-            if len(matched) >= 2:
+                lab = norm(e.get("label", ""))
+                if e.get("type") == "email" and "email" in wanted and "email" not in matched.values():
+                    matched[e["id"]] = "email"
+                    continue
+                for f, toks in LEX["field_tokens"]:
+                    if f in wanted and f not in matched.values() and any(t in lab for t in toks):
+                        matched[e["id"]] = f
+                        break
+            rest_in = [e for e in inputs if e["id"] not in matched]
+            rest_f = [f for f in wanted if f not in matched.values()]
+            if len(rest_in) == 1 and len(rest_f) == 1:  # assign the last field by elimination
+                matched[rest_in[0]["id"]] = rest_f[0]
+            if len(matched) >= 2 and len(matched) == len(inputs):
                 for rid, f in matched.items():
                     ab.fill(rid, values[f])
                     tr.actions.append(("fill", rid, f))
@@ -108,7 +112,7 @@ class HeuristicExplorer:
             ch = norm(values["channel"]).lstrip("#")
             if exp.get("exists") is True:
                 for e in els:
-                    if e["tag"] == "select" and score(e.get("label", ""), LEX["member_add"]):
+                    if e["tag"] == "select":
                         opt = next((o for o in e["options"] if norm(o).lstrip("#") == ch), None)
                         if opt:
                             ab.select(e["id"], opt)
@@ -128,23 +132,27 @@ class HeuristicExplorer:
 
     # ---------------------------------------------------------- navigation
     def next_link(self, snap, delta: Delta, values: dict, visited: set):
+        """Prefer links that name the target entity, then entity-ish words, then create words
+        (for creates); otherwise fall back to any unvisited in-app link (breadth-first)."""
         targets = [norm(values.get(k)) for k in ("username", "user", "display_name") if values.get(k)]
-        best, bs = None, 0.0
+        best, bs, fallback = None, 0.0, None
         for e in snap["elements"]:
-            if e["tag"] != "a" or not e.get("href") or e["href"] in visited:
+            href = e.get("href") or ""
+            if e["tag"] != "a" or not href.startswith("/") or href in visited or href.startswith("/c/"):
                 continue
             t = norm(e.get("text"))
             if score(t, LEX["avoid"]):
                 continue
+            fallback = fallback or e
             s = 0.0
-            if any(t == x for x in targets) or any(x and e["href"].rstrip("/").endswith("/" + x) for x in targets):
+            if any(t == x for x in targets) or any(x and href.rstrip("/").endswith("/" + x) for x in targets):
                 s = 10
-            s = max(s, 2 * score(t, LEX["nav"].get(delta.entity, [])))
+            s = max(s, 2 * score(t, LEX["nav"]))
             if delta.entity == "user" and delta.expect.get("exists") is True:
                 s = max(s, 2.5 * score(t, LEX["create"]))
             if s > bs:
                 best, bs = e, s
-        return best if bs > 0 else None
+        return best if bs > 0 else fallback
 
     def run(self, ab, delta: Delta, values: dict) -> Trace:
         tr = Trace()

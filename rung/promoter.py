@@ -97,12 +97,16 @@ class Synth:
             elif s.isdigit() and before is not None:
                 segs.append("{v[%r]}" % self.resolver(int(s), before))
             else:
-                segs.append(s.replace("{", "{{").replace("}", "}}"))
+                if not re.fullmatch(r"[A-Za-z0-9._~%-]*", s):
+                    raise Unresolvable(f"unsafe path segment {s!r} in recorded URL")
+                segs.append(s)
         q = urllib.parse.parse_qsl(parsed.query)
         qs = ""
         if q:
             parts = []
             for k, val in q:
+                if not re.fullmatch(r"[A-Za-z0-9._~-]+", k):
+                    raise Unresolvable(f"unsafe query key {k!r}")
                 arg = _match_arg(val, self.values, self.order)
                 if arg:
                     self.params.add(arg)

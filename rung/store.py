@@ -33,7 +33,7 @@ def con() -> sqlite3.Connection:
     c.executescript(
         """
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, request TEXT, requester TEXT, state TEXT,
-           goal TEXT, created TEXT, updated TEXT, wake_at TEXT, report TEXT);
+           goal TEXT, created TEXT, updated TEXT, wake_at TEXT, report TEXT, owner INTEGER);
         CREATE TABLE IF NOT EXISTS events(run_id TEXT, seq INTEGER, ts TEXT, kind TEXT, data TEXT);
         CREATE TABLE IF NOT EXISTS rungs(id TEXT PRIMARY KEY, app TEXT, signature TEXT, kind TEXT, path TEXT,
            status TEXT, version INTEGER, successes INTEGER DEFAULT 0, failures INTEGER DEFAULT 0,
@@ -50,8 +50,8 @@ def con() -> sqlite3.Connection:
 def new_run(request: str, requester: str) -> str:
     rid = "r" + uuid.uuid4().hex[:7]
     with con() as c:
-        c.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)",
-                  (rid, request, requester, "planned", None, now().isoformat(), now().isoformat(), None, None))
+        c.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?)",
+                  (rid, request, requester, "planned", None, now().isoformat(), now().isoformat(), None, None, None))
     event(rid, "run.created", {"request": request, "requester": requester})
     return rid
 

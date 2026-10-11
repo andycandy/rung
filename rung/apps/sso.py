@@ -85,6 +85,11 @@ class SSOApp(App):
             ctx.log("llm.error", {"call": "explore_step", "error": str(ex)})
             explorer = HeuristicExplorer()
             tr = explorer.run(ab, delta, self.values(delta, args), check=check, start=self.HOME)
+        if tr.gave_up and isinstance(explorer, LLMExplorer):
+            ctx.log("explore.fallback", {"from": explorer.name, "reason": tr.gave_up})
+            ctx.stats["llm_calls"] += tr.llm_calls
+            explorer = HeuristicExplorer()
+            tr = explorer.run(ab, delta, self.values(delta, args), check=check, start=self.HOME)
         rec = ab.stop_recording()
         shot = ab.screenshot(f"sso-{delta.entity}-{tag}")
         ctx.stats["explore_steps"] += 1

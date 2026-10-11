@@ -365,14 +365,15 @@ def main():
     if a.random is not None:
         info = reset(a.random)
         who = info["joiners"][0]
-        rid = run(f"Please onboard {who.split()[0]}, joining Monday")
+        mgr = f"{info['head'].lower().replace(' ', '.')}@acme.test"
+        rid = run(f"Please onboard {who.split()[0]}, joining Monday", requester=mgr)
         case(f"D1 re-seeded company (seed {a.random}: new names, same schema): onboard {who}", rid,
              onboarding_checks(who, who.lower().replace(" ", "."), ANALYST_CHANNELS))
 
     total = len(RESULTS)
     passed = sum(r["passed"] for r in RESULTS)
     fs = sum(r["false_success"] for r in RESULTS)
-    out = {"passed": passed, "total": total, "false_success": fs, "model": type(MODEL).__name__ if MODEL else "offline-heuristic",
+    out = {"passed": passed, "total": total, "false_success": fs, "model": getattr(getattr(MODEL, "inner", MODEL), "model", type(MODEL).__name__) if MODEL else "offline-heuristic",
            "wall_s": round(time.time() - t_all, 1), "cases": RESULTS, "rungs": store.all_rungs()}
     (VAR.parent / "eval" / "results.json").write_text(json.dumps(out, indent=2, default=str))
     print(f"\n{passed}/{total} cases passed, false-success claims: {fs}, total {out['wall_s']}s")

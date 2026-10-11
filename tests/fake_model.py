@@ -13,10 +13,11 @@ class FakeModel:
         self.calls += 1
         self.log.append(system[:60])
         if "extract structured fields" in system:
-            words = re.findall(r"\b[A-Z][a-z]+\b", user.split("<data>")[1])
+            req_data = user.split("<data>")[1].split("</data>")[0]
+            words = re.findall(r"\b[A-Z][a-z]+\b", req_data)
             person = next((w for w in words if w not in ("Please", "Onboard", "Monday")), None)
-            task = "onboarding" if "onboard" in user.lower() else None
-            date = "monday" if "monday" in user.lower() else None
+            task = "onboarding" if "onboard" in req_data.lower() else None
+            date = "monday" if "monday" in req_data.lower() else None
             return f"<think>reasoning</think>```json\n{json.dumps({'task_type': task, 'person': person, 'date_text': date})}\n```"
         if "operate a web app UI" in system:
             els = json.loads(re.search(r"Elements: (\[.*?\])\n<data>", user, re.S).group(1))

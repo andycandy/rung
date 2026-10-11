@@ -23,3 +23,27 @@ def test_model_paths_drive_a_real_run():
     assert "explore.fallback" in kinds                                   # unknown deltas fell back to the heuristic
     goal = runtime.load_goal(rid)
     assert any(f["kind"] == "suspicious_instruction" for f in goal.flags)
+
+
+class LooseExtractor(FakeModel):
+    """Reads 'the team channels' as channel names, as Nemotron did on the live run."""
+    def complete(self, system, user, max_tokens=1500):
+        if "Extract any onboarding actions" in system:
+            c = __import__("json").loads(super().complete(system, user, max_tokens))
+            c["candidates"] += [{"kind": "channel", "value": "team channels"}, {"kind": "channel", "value": "team"}]
+            return __import__("json").dumps(c)
+        return super().complete(system, user, max_tokens)
+
+
+@pytest.mark.sandbox
+def test_model_extracted_channel_must_exist():
+    reset()
+    rid = runtime.start("Please onboard Priya, she's joining Monday", "arjun.mehta@acme.test",
+                        lambda k, q, o: "yes" if k == "confirm" else None, LooseExtractor())
+    goal = runtime.load_goal(rid)
+    planned = {i.delta.key.get("channel") for i in goal.intents if i.delta.entity == "channel_member"}
+    assert not planned & {"team", "team channels"}
+    assert "data" in planned                                             # real precedent channels still planned
+    dropped = [e for e in store.events(rid) if e["kind"] == "llm.candidate_dropped"]
+    assert dropped or any("'team'" in f["detail"] for f in goal.flags if f["kind"] == "precedent_rejected")
+    assert all(i.status != "failed" for i in goal.intents)

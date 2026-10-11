@@ -69,6 +69,15 @@ def request_asks(ctx, request: str) -> dict:
             "excerpt": request[:300], "candidates": _candidates(ctx, request)}
 
 
+def model_channel(value: str, text: str) -> str | None:
+    """A channel the model extracted, or None. It must be a slug the message actually names:
+    'team channels' is a description, not a channel."""
+    name = value.strip().lstrip("#").lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]+", name) or name not in text.lower():
+        return None
+    return name
+
+
 def mail_instructions(ctx) -> list[dict]:
     """Instruction-like mail to ops@ about onboarding. Extracted *candidate* steps only --
     nothing here is executed without passing policy and confirmation."""
@@ -87,8 +96,20 @@ def mail_instructions(ctx) -> list[dict]:
                 from rung.llm.calls import extract_instructions
                 ctx.stats["llm_calls"] += 1
                 for c in extract_instructions(ctx.model, text):
-                    if c["kind"] in ("channel", "role") and c not in cands:
-                        cands.append({"kind": c["kind"], "value": c["value"].lstrip("#").lower() if c["kind"] == "channel" else "admin"})
+                    if c["kind"] == "channel":
+                        name = model_channel(c["value"], text)
+                        if name is None:
+                            ctx.log("llm.candidate_dropped", {"call": "extract_instructions", "candidate": c})
+                            continue
+                        c = {"kind": "channel", "value": name}
+                        if c not in cands:  # only the model saw it: derive checks it against known channels
+                            c["source"] = "model"
+                    elif c["kind"] == "role":
+                        c = {"kind": "role", "value": "admin"}
+                    else:
+                        continue
+                    if c not in cands:
+                        cands.append(c)
             except Exception as ex:  # noqa: BLE001
                 ctx.log("llm.error", {"call": "extract_instructions", "error": str(ex)})
         out.append({"id": m["id"], "sender": m["sender"], "subject": m["subject"], "trusted_sender": policy.trusted_sender(m["sender"]),

@@ -20,6 +20,7 @@ TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "APP
                                                  "django.contrib.auth.context_processors.auth",
                                                  "django.contrib.messages.context_processors.messages"]}}]
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": str(SANDBOX / "sso.db")}}
+TIME_ZONE = "Asia/Kolkata"
 USE_TZ = True
 STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"

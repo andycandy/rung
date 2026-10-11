@@ -27,20 +27,26 @@ def url(app: str) -> str:
     return f"http://127.0.0.1:{PORTS[app]}"
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
 def now() -> datetime:
     """Sandbox clock. A fake clock lets the eval jump to an employee's start date."""
     if CLOCK_FILE.exists():
         data = json.loads(CLOCK_FILE.read_text())
-        return datetime.fromisoformat(data["now"]) + timedelta(
+        dt = datetime.fromisoformat(data["now"]) + timedelta(
             seconds=(datetime.now(timezone.utc) - datetime.fromisoformat(data["set_at"])).total_seconds()
         )
-    return datetime.now(timezone.utc)
+        return dt.astimezone(IST)
+    return datetime.now(IST)
 
 
 def set_clock(when: datetime) -> None:
     CLOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
+        when = when.replace(tzinfo=IST)
+    else:
+        when = when.astimezone(IST)
     CLOCK_FILE.write_text(json.dumps({"now": when.isoformat(), "set_at": datetime.now(timezone.utc).isoformat()}))
 
 

@@ -53,7 +53,7 @@ def extract(ctx, request: str) -> dict:
         ctx.stats["llm_calls"] += 1
         try:
             out = resolve_goal(ctx.model, request, {k: v.get("match", []) for k, v in procs.items()}).model_dump()
-            return {**base, **{k: v for k, v in out.items() if v is not None}, "mentions": _mentions(request, out.get("person"))}
+            return {**base, **{k: v for k, v in out.items() if v is not None}, "mentions": _merge_mentions(request, out.get("person"))}
         except Exception as ex:  # noqa: BLE001 -- fall back to the offline parser, and say so
             ctx.log("llm.error", {"call": "resolve_goal", "error": str(ex)})
     low = request.lower()
@@ -82,6 +82,16 @@ def _mentions(request: str, person: str | None = None) -> list[str]:
     if cur:
         out.append(" ".join(cur))
     return out + EMAIL.findall(person or request)
+
+
+def _merge_mentions(request: str, person: str | None) -> list[str]:
+    """The model names one person; the request may name more ('Priya ... karan.shah@acme.test too').
+    Keep the model's mentions and add every offline mention it doesn't already cover, so a
+    second person is split out instead of silently dropped."""
+    model = _mentions(request, person) if person else []
+    covered = [set(m.split()) for m in model]
+    extra = [m for m in _mentions(request) if m not in model and not any(set(m.split()) <= c for c in covered)]
+    return model + extra
 
 
 # ------------------------------------------------------------------ entity resolution

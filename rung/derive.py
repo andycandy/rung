@@ -108,6 +108,7 @@ def team_channels(ctx, goal, scope, employee, username):
         cites += precedent.chat_announcements(ctx, employee["title"])
     except Exception as ex:  # noqa: BLE001
         ctx.log("precedent.chat_error", {"error": str(ex)})
+    known = set(stats["counts"]) | {c.ref.lstrip("#") for c in cites if c.ref.startswith("#")}  # channels seen in the workspace
     for cor in store.corrections(goal.task_type):
         if cor["scope"] and cor["scope"] not in (employee.get("title"), employee.get("team")):
             continue
@@ -131,6 +132,11 @@ def team_channels(ctx, goal, scope, employee, username):
         mails.append(req)
     for m in mails:
         for cand in m["candidates"]:
+            if cand.get("source") == "model" and cand["value"] not in known:
+                goal.flags.append({"kind": "precedent_rejected",
+                                   "detail": f"Mail '{m['subject']}' from {m['sender']} seems to ask for channel '{cand['value']}', "
+                                             "but no such channel is in use. Not done.", "source": f"mail #{m['id']}"})
+                continue
             d = Delta("chat", "user", {"username": username}, {"role": "admin"}) if cand["kind"] == "role" else \
                 Delta("chat", "channel_member", {"channel": cand["value"], "user": username}, {"exists": True})
             it = Intent("", d)

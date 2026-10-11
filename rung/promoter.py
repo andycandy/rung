@@ -203,6 +203,10 @@ class Drift(Exception):
     pass
 
 
+class LookupMiss(Drift):
+    """The target item isn't there -- may be bad input rather than a broken tool."""
+
+
 def _q(x):
     return urllib.parse.quote(str(x), safe="")
 
@@ -222,7 +226,7 @@ def _find(data, field, value):
     for it in items:
         if str(it.get(field, "")).lower() == str(value).lower():
             return it
-    raise Drift(f"no item with {{field}}={{value!r}}")
+    raise LookupMiss(f"no item with {{field}}={{value!r}}")
 
 
 def run(http, args):

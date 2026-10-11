@@ -37,6 +37,38 @@ def test_synthesis_resolves_ids_from_earlier_reads():
     assert meta["params"] == ["channel", "user"]
 
 
+def test_synthesized_lookup_miss_is_not_a_hard_drift():
+    rec = [
+        {"method": "GET", "url": "/api/v1/channels", "status": 200, "body": None, "headers": {},
+         "response": [{"id": 4, "name": "data"}]},
+        {"method": "POST", "url": "/api/v1/channels/4/members", "status": 201, "body": {"user": "priya.sharma"},
+         "headers": {}, "response": {"ok": True}},
+    ]
+    code, _ = synthesize("sig", {"channel": "data", "user": "priya.sharma"}, ["channel", "user"], rec, {})
+    ns = {}
+    exec(compile(code, "learned", "exec"), ns)
+    import pytest
+    with pytest.raises(ns["Drift"]) as ei:
+        ns["_find"]([{"name": "data"}], "name", "team channels")
+    assert type(ei.value).__name__ != "Drift"  # the ladder demotes immediately only on a plain Drift
+
+
+def test_model_channel_must_be_a_slug_the_message_names():
+    from rung.precedent import model_channel
+    text = "Please add her to the team channels and #dashboards"
+    assert model_channel("team channels", text) is None   # a description, not a channel
+    assert model_channel("#Dashboards", text) == "dashboards"
+    assert model_channel("finance-private", text) is None  # not in the message
+
+
+def test_model_person_does_not_drop_a_second_person():
+    from rung.understand import _merge_mentions
+    req = "Priya is joining Monday. karan.shah@acme.test too."
+    got = _merge_mentions(req, "Priya")        # what Nemotron returned on the live run
+    assert "priya" in got and "karan.shah@acme.test" in got
+    assert _merge_mentions("Onboard Karan Shah please", "Karan Shah") == ["karan shah"]  # 'karan' alone is covered
+
+
 def test_unresolvable_id_is_rejected():
     import pytest
     from rung.promoter import Unresolvable

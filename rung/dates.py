@@ -5,11 +5,14 @@ from __future__ import annotations
 import calendar
 import os
 import re
+import time
 from datetime import date, datetime, timedelta
 
 os.environ.setdefault("TZ", "Asia/Kolkata")
 if os.environ.get("TZ") == "Asia/Calcutta":  # tzlocal rejects the legacy alias
     os.environ["TZ"] = "Asia/Kolkata"
+if hasattr(time, "tzset"):
+    time.tzset()
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 MONTHS = [m.lower() for m in calendar.month_name[1:]] + [m.lower() for m in calendar.month_abbr[1:]]

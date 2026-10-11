@@ -87,11 +87,14 @@ def seed_sso(base, vault):
     permissions only (not a superuser)."""
     import os
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sandbox.sso.settings")
+    os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
     import django
     django.setup()
     from django.core.management import call_command
     from django.contrib.auth.models import Group, Permission, User
     call_command("migrate", verbosity=0, interactive=False)
+    User.objects.all().delete()
+    Group.objects.all().delete()
     vault["sso"] = {"username": "ops-bot", "password": secrets.token_hex(10)}
     bot = User.objects.create_user("ops-bot", "ops@" + DOMAIN, vault["sso"]["password"], is_staff=True)
     bot.user_permissions.set(Permission.objects.filter(codename__in=["add_user", "change_user", "view_user", "view_group"]))
@@ -104,7 +107,19 @@ def seed_sso(base, vault):
         u.groups.add(Group.objects.get(name=team))
 
 
+    try:
+        from django.db import connections
+        connections.close_all()
+    except Exception:
+        pass
+
+
 def seed(rng_seed: int | None = None):
+    try:
+        from django.db import connections
+        connections.close_all()
+    except Exception:
+        pass
     rng = random.Random(rng_seed) if rng_seed is not None else None
     if SANDBOX.exists():
         shutil.rmtree(SANDBOX)

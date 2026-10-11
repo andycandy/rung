@@ -76,6 +76,7 @@ def ensure(ctx, delta: Delta, args: dict | None = None, depth: int = 0) -> ExecR
             continue
         except Exception as ex:  # noqa: BLE001
             used = store.record_rung_use(r["id"], False, 0)
+            # a lookup miss can be bad input (a channel that doesn't exist), so it only counts toward DEMOTE_AFTER
             hard = type(ex).__name__ == "Drift" or "410" in str(ex)
             if hard or (used and used["consecutive_failures"] >= DEMOTE_AFTER):
                 store.update_rung(r["id"], status="demoted", note=f"{type(ex).__name__}: {ex}")

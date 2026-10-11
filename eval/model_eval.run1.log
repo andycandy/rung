@@ -1,0 +1,10 @@
+[PASS] A1 cold onboarding (explores Chatter UI, learns its API)  state=scheduled claimed=True false_success=False {'llm_calls': 21, 'explore_steps': 5, 'compiled_steps': 7, 'wall_s': 241.6}
+[PASS] A1b same request again (still onboarding): every immediate step is a verified no-op  state=scheduled claimed=True false_success=False {'llm_calls': 3, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 26.3}
+[PASS] A2 ambiguous name -> asks once (two pending Karans)  state=waiting_input claimed=False false_success=False {'llm_calls': 1, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 2.3}
+[PASS] A3 warm onboarding after the answer (uses learned API, no browser for writes)  state=scheduled claimed=True false_success=False {'llm_calls': 8, 'explore_steps': 1, 'compiled_steps': 7, 'wall_s': 91.2}
+[PASS] A4 scheduled start-date steps fire on Monday  state=done claimed=True false_success=False {'llm_calls': 21, 'explore_steps': 5, 'compiled_steps': 9, 'wall_s': 241.8}
+[PASS] A5 request about someone already onboarded -> asks, does nothing  state=waiting_input claimed=False false_success=False {'llm_calls': 1, 'explore_steps': 0, 'compiled_steps': 0, 'wall_s': 11.4}
+[PASS] A6 requester declines the precedent-based steps -> only written-procedure steps run  state=done claimed=True false_success=False {'llm_calls': 8, 'explore_steps': 1, 'compiled_steps': 6, 'wall_s': 116.6}
+[FAIL] B1 API moved (v1 -> 410): demote learned tools, re-explore, re-learn  state=scheduled_partial claimed=False false_success=False {'llm_calls': 39, 'explore_steps': 6, 'compiled_steps': 6, 'wall_s': 798.6}
+[PASS] B2 expired session mid-flight: re-login, continue  state=scheduled claimed=True false_success=False {'llm_calls': 21, 'explore_steps': 2, 'compiled_steps': 8, 'wall_s': 329.7}
+[FAIL] B3 crash after 3 steps -> resumed from checkpoint, nothing duplicated  state=scheduled_partial claimed=False false_success=False {'llm_calls': 1, 'explore_steps': 1, 'compiled_steps': 6, 'wall_s': 13.8}

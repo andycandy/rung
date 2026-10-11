@@ -101,6 +101,11 @@ class HeuristicExplorer:
                     continue
                 matched[f] = e
                 taken.add(e["id"])
+            left_inputs = [e for e in inputs if e["id"] not in taken and e.get("type") != "checkbox"]
+            left_wanted = [f for f in wanted if f not in matched and not isinstance(wanted[f], bool)]
+            if len(left_inputs) == 1 and len(left_wanted) == 1:
+                matched[left_wanted[0]] = left_inputs[0]
+                taken.add(left_inputs[0]["id"])
 
             def differs(f, e):
                 if isinstance(wanted[f], bool):

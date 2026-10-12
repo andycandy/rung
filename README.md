@@ -5,6 +5,15 @@
 > **The model understands language. Code never does.**
 > Code grounds what the model said against systems of record, runs routines already verified to work, and checks real state afterwards. The model can't approve itself, raise its own privileges, or declare a step done.
 
+**▶ [Demo video (2 min 38 s, sped up 2×)](docs/rung-demo.mp4).** One continuous real run on Nemotron. On the left is the browser Rung operates; on the right, what it reads, decides, rejects and learns, and which rung of the ladder each step uses.
+1. Cold start: Rung explores Chatter, learns its API, and the policy and the untrusted mail are enforced.
+2. Warm run: the next hire goes through the learned API in milliseconds.
+3. A task Rung has never seen: it finds `handbook/dashboards-access.md` itself, drafts a skill, and runs it once approved.
+4. Chatter ships API v2: the old tools get 410, are demoted, and are relearned.
+5. The next hire runs on the new tools.
+
+Every number on screen comes from Rung's event log. The real-time clock stays visible, and every model call of the take is in [`docs/demo_run.jsonl`](docs/demo_run.jsonl). The tooling is in `scripts/demo_video/`.
+
 ## Why this design
 
 The brief asks for something narrow but genuinely autonomous. The expensive failure for an ops agent isn't "couldn't do it". It's **"said it was done, and it wasn't"**, or "did something nobody asked for". So Rung is built around **verified completion over improvisation**:

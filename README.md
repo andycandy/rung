@@ -7,6 +7,19 @@
 
 There is no offline mode. With `RUNG_MODEL` unset, `rung run` refuses: *"Rung needs a model (set RUNG_MODEL)"*. Deterministic runs use **replay** of a recorded real-model session.
 
+### At a glance
+
+All numbers below come from runs on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, with the code in this repository:
+
+| | result |
+|---|---|
+| main eval, 41 cases (commit `b701ec5`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
+| replay of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
+| unknown-task skill search, S1–S5 (latest code) | **5/5, 0 false successes**; an untrusted "how-to" mail the model picked was rejected by code |
+| tests | `pytest -q`: 82 unit tests plus the replay test pass |
+| language-reading code left in `rung/` | none: the spec's grep returns nothing |
+| known weak spots | the UI explorer can't disable an SSO login or add a channel on Chatter's third UI variant; once, the model read a two-person request as "not a request". All three fail honestly, none claims success |
+
 ## Architecture
 
 ```
@@ -18,7 +31,11 @@ understand_request      ONE typed model call -> Understanding {is_request, inten
   ▼
 ground                  CODE, structured data only:
   │                       not a request -> nothing to do      intent != do -> ask
-  │                       unknown / unsure task -> ask (or draft a procedure from a prose SOP, with approval)
+  │                       unsure task -> ask which; unknown task -> look for a written how-to first:
+  │                         sources (CODE: Drive handbook/templates, ops@ mail, trust flags) -> find_howto (MODEL)
+  │                         -> pick validated (CODE: ids shown, no untrusted mail, high confidence)
+  │                         -> draft_procedure (MODEL) -> validator (CODE) -> drafts/ -> human approval
+  │                         nothing fits -> ask for directions ("sop: <path>" always wins)
   │                       every person -> exact work e-mail, or every name token in an HR full name; status filter;
   │                                       0 or >1 matches -> ask; several people -> one child run each; nobody dropped
   │                       every date -> must be ISO; low confidence / missing / disagrees with HR -> ask; never "today"
@@ -55,7 +72,8 @@ Who does what:
 | | model | code |
 |---|---|---|
 | what the request asks, who and when it's about | ✔ `understand_request` | grounds every answer against HR / ISO dates / e-mail syntax |
-| which task it is | ✔ picks from `{task: description}` | asks if unknown or unsure |
+| which task it is | ✔ picks from `{task: description}` | asks if unsure |
+| how an unknown task is done | ✔ `find_howto` picks sources; `draft_procedure` drafts | gathers sources; rejects unshown or untrusted picks; validates the draft; nothing runs before human approval |
 | which extra steps (e.g. team channels) | ✔ `propose_steps` from evidence | gathers the evidence; validates every step; enforces trust, policy, existence |
 | how to operate an unfamiliar UI | ✔ `explore_step` | checks `app.holds()` after every action; the model's "done" means nothing |
 | whether anything is allowed, done, or trusted | ✘ | ✔ policy gate, verification, promoter, saga |
@@ -91,7 +109,7 @@ Also changed:
 | 2 | NIM answered HTTP 429; the step failed after ~5 s of retries | 429 backoff |
 | 3 | SSO creation looped for 6 minutes: the explorer generated a *different* random secret for each of Django's two password boxes, so they never matched. The required step failed and the saga undid the run (reported honestly as `compensated`) | one generated secret per exploration |
 | 4 | Actions naming an element that isn't on the page (the model used HTML ids like `id_username`) each waited Playwright's 30 s timeout | rejected immediately with feedback; batches stop after a navigation; 10 s element timeout |
-| 5 | **Would have been a false success.** The channel proposal was cut off at the 1,500-token limit; the JSON extractor then fell back to the first *inner* object that parsed (one step's delta), which validated as an empty proposal. The plan silently had no channels and the run reported success | only the outermost object is accepted (a truncated answer is an error, fed back); the proposal call gets 4,000 tokens and a strict schema; the procedure declares `min_steps: 1`, so an empty proposal is retried and then escalated |
+| 5 | **Would have been a false success.** The channel proposal was cut off at the 1,500-token limit; the JSON extractor then fell back to the first *inner* object that parsed (one step's delta), which validated as an empty proposal. The plan silently had no channels and the run reported success | only the outermost object is accepted (a truncated answer is an error, fed back); the proposal call gets a larger output budget (now 8,000 tokens with reasoning, see R1) and a strict schema; the procedure declares `min_steps: 1`, so an empty proposal is retried and then escalated |
 | 6 | First full-eval attempt, case A1: the model read "Monday" (said on Thursday 8 Oct) as 2026-10-13, a Tuesday. Grounding caught it, because it disagreed with HR's start date, and asked instead of acting; but A1 and everything built on it would fail | the prompt now carries a four-week calendar generated by code ("Thu 2026-10-08 (today) \| Fri 2026-10-09 \| … \| Mon 2026-10-12 …"); the model looks weekdays up instead of computing them. Code still reads no language: it supplies facts. The eval was restarted from scratch |
 
 **Code review before the full eval.** After those six, the code was reviewed end to end, walking each eval case through it, instead of fixing failures one run at a time. It found:
@@ -137,7 +155,7 @@ Three regular expressions remain in `rung/`, all on structured data: `EMAIL_SYNT
 
 ## Results (independent oracle)
 
-One full run of `python -m eval.run_eval --random 7` on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, with this code, recorded:
+One full run of `python -m eval.run_eval --random 7` on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, at commit `b701ec5`, recorded:
 
 | false successes | cases passed | model calls | wall time |
 |---|---|---|---|
@@ -194,7 +212,7 @@ The oracle reads the apps' databases and the Drive directly, which the agent can
 | C6 | offboarding (added as YAML only) | everything at the end of the last day; manager told |
 | C7 | "PDF of who joined this month" | HR query → LibreOffice PDF → email with attachment |
 | C8 | policy vs precedent vs injected mail | flags from A1 |
-| **C9** | unknown task, requester points at a prose SOP | the model drafts a procedure, code validates it, requester approves, it runs (was a scripted-fake test before) |
+| **C9** | unknown task, requester points at a prose SOP (`sop:`) | the model drafts a procedure, code validates it, requester approves, it runs (was a scripted-fake test before). Since the skills feature, the first request also searches for a how-to itself; see S1–S5 |
 | R1 | "Priya isn't joining anymore, please don't onboard her" | asks, does nothing |
 | R2 | lowercase full name | resolves |
 | R3 | two people in one request (second named by e-mail) | one run each |
@@ -264,9 +282,12 @@ The untrusted trap mail is sent at the start of section S rather than in the bas
 - **What code can't check.** Code verifies that a proposed channel exists, that its citations are real and trusted, and that policy allows it. When a citation is a peer's setup, code also checks that the peer really is in that channel. It can't check that a trusted mail or chat message *means* what the model says it means. Those steps are still precedent, so on first use they need the requester's confirmation.
 - **People.** The model must list every person; code can't detect a person the model never mentions. Grounding then never drops one the model did list. A manager named in passing ("she reports to Arjun") is treated as a possible subject and produces a question.
 - **Learned tools that keep failing on 409/422 stay promoted.** By design, since a business rule isn't interface drift. A tool whose API changed in a way that only shows up as 400/422 would keep failing and fall through to exploration each time. Correct, but slow.
-- **Replay is exact-match.** A replayed run must send byte-identical prompts. The sandbox must run with `PYTHONHASHSEED=0` (Chatter's UI variant 2 scrambles element ids with Python's `hash`), and anything time-dependent in prompts is limited to the date.
+- **Replay is exact-match.** A replayed run must send the same prompts, except for wall-clock times and Django's password-salt summary, which are masked in the replay key only. The sandbox must run with `PYTHONHASHSEED=0` (Chatter's UI variant 2 scrambles element ids with Python's `hash`). A recording only reproduces the code it was made with (see the note under Results).
+- **The explorer has known gaps.** It can't disable an SSO login in the Django admin, or add a channel on Chatter's third UI variant (explorer benchmark 9/11; eval cases C6 and B5.3). Both fail honestly; a required step that fails makes the saga undo the run.
+- **One reading miss in the eval.** "Priya is joining Monday. karan.shah@acme.test too." was read as not a request in the full run (R3), though the understanding benchmark read it correctly. Nothing wrong was done, but the request was missed. Model answers vary between runs at temperature 0.2.
 - **The sandbox apps are purpose-built stand-ins** (Docker images couldn't be pulled): PeopleHub (HRIS with OpenAPI), Chatter (Slack-like SPA with session cookies, CSRF, a versioned JSON API, telemetry noise), Mailroom (real SMTP via aiosmtpd plus a Mailpit-style API), and a stock Django admin for SSO. LibreOffice, Chromium/Playwright, SMTP and SQLite are real.
-- **Plans come from structured procedures** (`memory/procedures/*.yaml`: onboarding, offboarding, a joiners report). An unknown task gets a question; with a pointer to a prose SOP, the model drafts a new procedure, code validates it against the apps' vocabulary, and a human approves it.
+- **Plans come from structured procedures** (`memory/procedures/*.yaml`: onboarding, offboarding, a joiners report). An unknown task first gets a search for a written how-to in the Drive and the ops@ mailbox. A validated draft needs a human's approval before it is saved or run. If nothing fits, Rung asks for directions; a `sop: <path>` pointer always wins.
+- **Skill search has limits.** It only looks in the Drive's `handbook/` and `templates/` folders and the last 30 ops@ mails. It can't tell whether a found document is current; the approving human is that check.
 - **What "verified" means:** the expected fields are re-read from the system of record after each action; unintended changes are detected only within each app's state projection.
 - **Sandbox tests run in the live workspace** (`zz-test-*` accounts). Production would point them at a staging tenant.
 - **Single process.** A run lease stops `tick` from resuming a live run; there is no distributed queue.
@@ -290,9 +311,19 @@ python -m rung rungs        # learned tools and their status
 python -m rung events <run> # full event log, including every model reading and proposal
 python -m rung correct onboarding --scope "Data Analyst" --add-channel finance
 
+# an unknown task: Rung finds a how-to, drafts, and asks; approve with the draft's name from its question
+python -m rung run "Please give Kavya Reddy dashboard access"
+python -m rung run "Please give Kavya Reddy dashboard access" --answer approve_procedure=yes --answer drafted=<name>
+
 # full eval, recorded; then the same eval replayed from the recording (deterministic, no network)
 RUNG_RECORD=eval/model_run.jsonl python -m eval.run_eval --random 7
 RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7
+python -m eval.run_eval --only S           # just the skill-search cases S1-S5
+
+# layer benchmarks: each layer alone on the real model
+python -m eval.bench_understanding [--thinking on|off]
+python -m eval.bench_proposals [--thinking on|off]
+python -m eval.bench_explorer
 
 python -m pytest -q tests                  # unit tests need nothing; the replay test needs the sandbox and a recording
 ```
@@ -303,9 +334,12 @@ Model calls are stateless, single-turn and JSON-validated (pydantic), with the v
 
 | path | role |
 |---|---|
-| `rung/llm/calls.py` | the typed model calls: `understand_request`, `propose_steps`, `explore_step`, `draft_procedure` |
+| `rung/llm/calls.py` | the typed model calls: `understand_request`, `propose_steps`, `find_howto`, `explore_step`, `draft_procedure`; per-call reasoning budgets (`REASONING`) |
 | `rung/ground.py` | grounding: people, dates, intent, task, unclear → resolved facts or questions |
-| `rung/precedent.py` | evidence gathering (peers, mail with trust flags, chat, SOP), unfiltered |
+| `rung/precedent.py` | evidence gathering (peers, mail with trust flags, chat, SOP) and how-to sources (Drive docs, ops@ mail), unfiltered |
+| `rung/howto.py` | unknown tasks: validate the model's how-to pick, draft, ask for approval or directions |
+| `rung/procedures.py` | procedure validator (also rejects fixed times), drafting from one or more sources, drafts/ and approval |
+| `rung/inbox.py` | email front door: replies in-thread; destructive requests need a one-time code; approvals in a thread |
 | `rung/proposals.py` | validation of proposed steps: vocabulary, subject, existence, citations, trust, policy; human corrections |
 | `rung/understand.py`, `rung/derive.py` | orchestration (understand → ground → authorize → build), generic plan builder over YAML procedures |
 | `rung/dates.py`, `rung/syntax.py` | ISO-date validator; e-mail syntax, identifiers, template placeholders |
@@ -318,7 +352,9 @@ Model calls are stateless, single-turn and JSON-validated (pydantic), with the v
 | `rung/explore/*` | headless browser with traffic capture; the model explorer |
 | `rung/llm/client.py` | NIM / OpenAI-compatible / Anthropic clients, recording, exact-match replay |
 | `sandbox/*` | the fake company, seed generator (with conflicting and malicious precedent), failure-injection flags, fake clock |
-| `eval/*` | scenarios, independent oracle, results; `eval/archive_iteration3/` holds the previous architecture's logs |
+| `eval/run_eval.py`, `eval/oracle.py` | scenarios A–D, N, S; the independent oracle |
+| `eval/bench_*.py` | layer benchmarks (understanding, proposals, explorer) |
+| `eval/*.log`, `eval/*.json`, `eval/*.jsonl` | results and full recordings of the runs above; `eval/archive_iteration3/` holds the previous architecture's logs |
 
 ## Prior art
 

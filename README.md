@@ -137,10 +137,27 @@ Three regular expressions remain in `rung/`, all on structured data: `EMAIL_SYNT
 
 ## Results (independent oracle)
 
-**Pending.** The full eval on NVIDIA NIM `nemotron-3-super-120b-a12b` with this code has not finished yet; this section will report, in this order: false successes, pass rate, model calls, wall time, and then whether a replay of the recording reproduces the same results. No earlier numbers are carried over: they came from the previous architecture (regex understanding, heuristic explorer) and don't describe this code. Those runs' logs are kept, for history only, in `eval/archive_iteration3/`.
+One full run of `python -m eval.run_eval --random 7` on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, with this code, recorded:
 
-Produced on this branch so far:
-- `pytest -q`: **75 passed**, 1 skipped (the replay test, which needs a recording from the eval run).
+| false successes | cases passed | model calls | wall time |
+|---|---|---|---|
+| **0** | **38 / 41** | 368 (mean 3.7 s per call) | 1,734 s (29 min) |
+
+Files: [`eval/model_eval.log`](eval/model_eval.log) (per case), [`eval/results.json`](eval/results.json), and every prompt and answer in [`eval/model_run.jsonl`](eval/model_run.jsonl) (no keys in it). Request rate: the busiest 60 s window holds 19 recorded call start times. Those are stamped before the client's limiter, which caps actual sends at 18/min, against NIM's 20/min limit.
+
+The three failures. Each run reported its own failure, and none claimed success:
+
+| case | what happened | why |
+|---|---|---|
+| B5.3 UI redesign v3, no learned tools | `scheduled_partial`: the channel steps failed | the explorer can't add a channel on the third Chatter variant (also 0/1 in the explorer benchmark) |
+| C6 offboarding | `compensated`: the saga undid the completed steps | disabling the SSO login in the Django admin failed (also failing in the explorer benchmark); it is a required step, so nothing was left half-done |
+| R3 "Priya is joining Monday. karan.shah@acme.test too." | `ignored` | this time the model read the message as not a request (the understanding benchmark read it correctly). Nothing was done, but the request was missed |
+
+No earlier numbers are carried over: they came from the previous architecture (regex understanding, heuristic explorer) and don't describe this code. Those runs' logs are kept, for history only, in `eval/archive_iteration3/`.
+
+Also produced on this branch: `pytest -q` **75 passed**, 1 skipped (the replay test, which runs once `eval/model_run.jsonl` is present and the sandbox is up).
+
+**Replay** (`RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl`): *running at the time of this commit; result to follow.*
 
 The oracle reads the apps' databases and the Drive directly, which the agent can never do. *False success* means the agent claimed done but the oracle disagrees.
 

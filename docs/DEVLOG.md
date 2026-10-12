@@ -16,7 +16,7 @@ All numbers below come from runs on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12
 
 | | result |
 |---|---|
-| main eval, 41 cases (commit `b701ec5`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
+| main eval, 41 cases (tag `eval-run-1`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
 | replay of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
 | unknown-task skill search, S1–S5 (latest code) | **5/5, 0 false successes**; an untrusted "how-to" mail the model picked was rejected by code |
 | tests | `pytest -q`: 82 unit tests plus the replay test pass |
@@ -158,7 +158,7 @@ Three regular expressions remain in `rung/`, all on structured data: `EMAIL_SYNT
 
 ## Results (independent oracle)
 
-One full run of `python -m eval.run_eval --random 7` on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, at commit `b701ec5`, recorded:
+One full run of `python -m eval.run_eval --random 7` on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`, at tag `eval-run-1`, recorded:
 
 | false successes | cases passed | model calls | wall time |
 |---|---|---|---|
@@ -187,7 +187,7 @@ Also produced on this branch: `pytest -q` **83 passed**: 82 unit tests, plus the
 | model calls answered | 368 | 368, **0 replay misses** |
 | wall time | 1,734 s | 367 s |
 
-*Which code these numbers describe:* the live run and its replay were made at commit `b701ec5`. The skills feature added after it (next section) changes what C9's first request does: it now searches for a how-to before asking. Replaying `eval/model_run.jsonl` on a later commit therefore diverges at C9, until the full eval is re-recorded.
+*Which code these numbers describe:* the live run and its replay were made at tag `eval-run-1`. The skills feature added after it (next section) changes what C9's first request does: it now searches for a how-to before asking. Replaying `eval/model_run.jsonl` on a later commit therefore diverges at C9, until the full eval is re-recorded.
 
 All 41 cases end in the same state, with the same pass/fail and false-success result ([`eval/replay_eval.log`](../eval/replay_eval.log), [`eval/results_replay.json`](../eval/results_replay.json)). The first replay attempt diverged at A1's SSO step on Django's random password-salt summary. That was fixed by masking it in the replay key (see R6), after which the full replay matched.
 

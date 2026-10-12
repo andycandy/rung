@@ -72,7 +72,7 @@ Real model: NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`.
 
 | | result |
 |---|---|
-| **main eval**, 41 cases (commit `b701ec5`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
+| **main eval**, 41 cases (tag `eval-run-1`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
 | **replay** of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
 | **skill search**, S1–S5 (latest code) | **5/5, 0 false successes**. In S4 the model picked an untrusted "how-to" trap mail with high confidence, and **code rejected it** |
 | tests | 82 unit tests + 1 replay test pass |

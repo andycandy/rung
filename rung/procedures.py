@@ -57,6 +57,10 @@ def validate(proc: dict) -> list[str]:
         if d.get("fn") not in derive.FNS:
             errs.append(f"unknown derivation '{d.get('fn')}' (known: {sorted(derive.FNS)})")
         names.add(d.get("name"))
+    hr = _entity_spec("hr", "employee")
+    hr_fields = {"full_name", "preferred_name", *hr["key"], *hr["compare"]}
+    errs += [f"requires: '{f}' is not a PeopleHub employee field (known: {sorted(hr_fields)})"
+             for f in proc.get("requires", []) if f not in hr_fields]
     prop = proc.get("propose")
     if prop is not None:
         from rung.precedent import SOURCES

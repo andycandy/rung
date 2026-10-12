@@ -34,6 +34,14 @@ def test_placeholders_must_be_defined():
     assert any("'{nope}' is never defined" in e for e in validate(p))
 
 
+def test_required_fields_must_be_peoplehub_fields():
+    # what the model drafted from the dashboards SOP in the demo take: 'employee' is not a field, so every run would ask for it
+    p = {"task_type": "t", "description": "t", "requires": ["employee", "work_email"], "steps": []}
+    errs = validate(p)
+    assert any("'employee' is not a PeopleHub employee field" in e for e in errs)
+    assert not any("requires: 'work_email'" in e for e in errs)
+
+
 def test_a_fixed_time_in_a_drafted_procedure_is_rejected():
     # what the model drafted from the dashboards SOP in eval S2: both steps parked until a hard-coded time
     step = {"id": "join", "description": "Add to #dashboards", "not_before": "2026-10-08T09:00:00Z",

@@ -19,7 +19,7 @@ All numbers below come from runs on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12
 | main eval, 41 cases (tag `eval-run-1`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
 | replay of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
 | unknown-task skill search, S1–S5 (latest code) | **5/5, 0 false successes**; an untrusted "how-to" mail the model picked was rejected by code |
-| tests | `pytest -q`: 82 unit tests plus the replay test pass |
+| tests | `pytest -q`: 85 pass: 83 unit tests, plus 2 against the live sandbox (the replay test and the SSO-stylesheet test) |
 | language-reading code left in `rung/` | none: the spec's grep returns nothing |
 | known weak spots | the UI explorer can't disable an SSO login or add a channel on Chatter's third UI variant; once, the model read a two-person request as "not a request". All three fail honestly, none claims success |
 
@@ -176,7 +176,7 @@ The three failures. Each run reported its own failure, and none claimed success:
 
 No earlier numbers are carried over: they came from the previous architecture (regex understanding, heuristic explorer) and don't describe this code. Those runs' logs are kept, for history only, in `eval/archive_iteration3/`.
 
-Also produced on this branch: `pytest -q` **83 passed**: 82 unit tests, plus the replay test (case A1 replayed from `eval/model_run.jsonl` against the live sandbox, 0 misses).
+Tests: `pytest -q` **85 passed**: 83 unit tests, plus two against the live sandbox. One is the replay test: case A1 replayed from `eval/model_run.jsonl`, with 0 misses. The other checks that the SSO admin's presentation-only stylesheet changes nothing the agent reads.
 
 **Replay** (`RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7`) reproduces the live run exactly:
 
@@ -246,7 +246,7 @@ When a request matches no known procedure, Rung doesn't go straight to "tell me 
    - only `found` with high confidence goes on.
    - Anything else asks for directions.
 4. **Draft** (`procedures.draft_from_sources`): the picked texts, in full, become a procedure.
-   - It passes the same validator as `sop:` drafting (known apps, entities and fields; defined placeholders; and now no fixed timestamps), with errors fed back.
+   - It passes the same validator as `sop:` drafting (known apps, entities and fields; defined placeholders; no fixed timestamps; `requires` names only PeopleHub fields), with errors fed back.
    - It is saved **only** under `memory/procedures/drafts/`.
 5. **Approval**: "I found how to do this in: … Proposed procedure: 1. … Reply `approve_procedure: yes` to save and run it, or `sop: <path>` to point me elsewhere." This works the same on the CLI and in email threads.
    - Once approved, the draft moves to `memory/procedures/`.
@@ -333,7 +333,7 @@ python -m eval.bench_understanding [--thinking on|off]
 python -m eval.bench_proposals [--thinking on|off]
 python -m eval.bench_explorer
 
-python -m pytest -q tests                  # unit tests need nothing; the replay test needs the sandbox and a recording
+python -m pytest -q tests                  # unit tests need nothing; the replay and SSO-stylesheet tests need the sandbox
 ```
 
 Model calls are stateless, single-turn and JSON-validated (pydantic), with the validation error fed back on retry. Untrusted text (requests, mail, chat, pages) goes inside `<data>` tags. Calls that read untrusted text get no tools.
@@ -346,7 +346,7 @@ Model calls are stateless, single-turn and JSON-validated (pydantic), with the v
 | `rung/ground.py` | grounding: people, dates, intent, task, unclear → resolved facts or questions |
 | `rung/precedent.py` | evidence gathering (peers, mail with trust flags, chat, SOP) and how-to sources (Drive docs, ops@ mail), unfiltered |
 | `rung/howto.py` | unknown tasks: validate the model's how-to pick, draft, ask for approval or directions |
-| `rung/procedures.py` | procedure validator (also rejects fixed times), drafting from one or more sources, drafts/ and approval |
+| `rung/procedures.py` | procedure validator (also rejects fixed times and unknown `requires` fields), drafting from one or more sources, drafts/ and approval |
 | `rung/inbox.py` | email front door: replies in-thread; destructive requests need a one-time code; approvals in a thread |
 | `rung/proposals.py` | validation of proposed steps: vocabulary, subject, existence, citations, trust, policy; human corrections |
 | `rung/understand.py`, `rung/derive.py` | orchestration (understand → ground → authorize → build), generic plan builder over YAML procedures |
@@ -359,10 +359,11 @@ Model calls are stateless, single-turn and JSON-validated (pydantic), with the v
 | `rung/apps/*` | one adapter per app: login, probes, state projection, existing tools, workspace reads |
 | `rung/explore/*` | headless browser with traffic capture; the model explorer |
 | `rung/llm/client.py` | NIM / OpenAI-compatible / Anthropic clients, recording, exact-match replay |
-| `sandbox/*` | the fake company, seed generator (with conflicting and malicious precedent), failure-injection flags, fake clock |
+| `sandbox/*` | the fake company, seed generator (with conflicting and malicious precedent), failure-injection flags, fake clock, presentation-only styling (`sandbox/sso/skin.py`) |
 | `eval/run_eval.py`, `eval/oracle.py` | scenarios A–D, N, S; the independent oracle |
 | `eval/bench_*.py` | layer benchmarks (understanding, proposals, explorer) |
 | `eval/*.log`, `eval/*.json`, `eval/*.jsonl` | results and full recordings of the runs above; `eval/archive_iteration3/` holds the previous architecture's logs |
+| `scripts/demo.sh`, `scripts/demo_video/*` | the sample report (`docs/sample_report.md`); the demo video's live viewer (reads only the event log and browser frames), five-chapter story and recorder |
 
 ## Prior art
 

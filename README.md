@@ -165,4 +165,5 @@ python -m pytest -q tests
 | `rung/apps/*`, `rung/explore/*` | one adapter per app; headless browser with traffic capture; the guarded model explorer |
 | `memory/` | procedures (YAML) and written policy |
 | `sandbox/`, `eval/` | the sandbox company with failure injection; the eval, oracle, layer benchmarks, results and recordings |
+| `scripts/demo.sh`, `scripts/demo_video/` | the sample report; the demo video's live viewer, story and recorder |
 | [`docs/DEVLOG.md`](docs/DEVLOG.md) | how this version was built: design decisions, every bug found and fixed, benchmarks, full results |

@@ -1,0 +1,139 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Rung · live</title>
+<style>
+:root{--bg:#0d1017;--panel:#121722;--line:#1f2633;--muted:#8b95a7;--text:#e6e9ef;--blue:#5aa9ff;--green:#3ccf8e;--gold:#f5c451;--red:#ff6b6b;--violet:#b48cff}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden}
+#top{height:54px;display:flex;align-items:center;gap:16px;padding:0 22px;border-bottom:1px solid var(--line);background:#0a0d13}
+#brand{font-weight:800;font-size:18px;letter-spacing:.2px}
+#brand span{color:var(--blue)}
+#model{color:var(--muted);font-size:13px}
+#chapter{margin-left:auto;font-weight:700;font-size:16px;color:var(--gold)}
+#clock{font-variant-numeric:tabular-nums;color:#fff;background:#1c2330;padding:4px 10px;border-radius:7px;font-size:13px}
+#speed{color:#001;background:var(--gold);padding:4px 10px;border-radius:7px;font-size:13px;font-weight:800;display:none}
+#wrap{display:flex;height:calc(100% - 54px)}
+#left{flex:1;padding:18px 18px 18px 22px;display:flex;flex-direction:column;min-width:0}
+#win{flex:1;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;position:relative}
+#bar{height:38px;background:#e9ebef;display:flex;align-items:center;gap:10px;padding:0 12px;color:#333;font-size:13px}
+.dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+#url{flex:1;background:#fff;border-radius:7px;padding:4px 10px;color:#444;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#appname{font-weight:700;color:#3f0e40}
+#screen{flex:1;background:#f4f4f6 center top/contain no-repeat;position:relative}
+#idle{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9aa1ad;font-size:18px}
+#card{position:absolute;right:18px;bottom:18px;min-width:330px;padding:14px 18px;border-radius:12px;background:rgba(13,16,23,.94);
+      color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(10px);transition:all .35s}
+#card.show{opacity:1;transform:none}
+#card .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+#card .v{font-size:20px;font-weight:800;margin-top:2px}
+#card .s{font-size:13px;color:#c9d1dd;margin-top:2px}
+#right{width:640px;border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+#ladder{padding:14px 18px 10px;border-bottom:1px solid var(--line)}
+#ladder h3,#feedh{margin:0 0 8px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.rung{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:8px;margin:3px 0;border:1px solid transparent;transition:all .25s}
+.rung .n{width:22px;height:22px;border-radius:6px;background:#1c2330;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
+.rung .l{flex:1}
+.rung .t{font-size:12px;color:var(--muted)}
+.rung.active{border-color:var(--blue);background:rgba(90,169,255,.10)}
+.rung.active .n{background:var(--blue);color:#001}
+.rung.ok{border-color:var(--green);background:rgba(60,207,142,.12)}
+.rung.ok .n{background:var(--green);color:#001}
+.rung.bad{border-color:var(--red);background:rgba(255,107,107,.14)}
+.rung.gold{border-color:var(--gold);background:rgba(245,196,81,.14)}
+#stats{display:flex;gap:18px;margin-top:8px;color:var(--muted);font-size:12px}
+#stats b{color:var(--text)}
+#feedwrap{flex:1;display:flex;flex-direction:column;min-height:0;padding:12px 18px 0}
+#feed{flex:1;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:14px}
+.ev{display:flex;gap:9px;padding:6px 10px;margin:3px 0;border-radius:8px;animation:in .35s ease-out;border-left:3px solid transparent}
+.ev .i{width:20px;flex:none;text-align:center}
+.ev .x{flex:1}
+.ev .sub{display:block;color:var(--muted);font-size:12px}
+.ev.chapter{margin-top:14px;padding:10px 12px;background:linear-gradient(90deg,rgba(245,196,81,.18),transparent);border-left-color:var(--gold);font-weight:800;font-size:15px}
+.ev.request{background:#18202d;border-left-color:var(--blue);font-size:15px}
+.ev.think{border-left-color:var(--violet)}
+.ev.thinking{color:#b9b2d6;font-style:italic;font-size:13px;border-left-color:#5b4a8a;background:rgba(180,140,255,.06)}
+.ev.code{border-left-color:#3d6fb6}
+.ev.ui{color:#cfd6e2;font-size:13px}
+.ev.step{font-weight:700;color:#fff;margin-top:6px}
+.ev.ok{color:var(--green);font-weight:600}
+.ev.learn{border-left-color:var(--gold);background:rgba(245,196,81,.10);font-weight:700}
+.ev.warn{border-left-color:var(--red);background:rgba(255,107,107,.10)}
+.ev.ask{border-left-color:#4bb8c4}
+@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style></head>
+<body>
+<div id="top"><div id="brand">Rung <span>·</span> live run</div><div id="model">model: NVIDIA Nemotron 3 Super (NIM) · code verifies every step against real state</div><div id="chapter">starting…</div><div id="clock" title="real elapsed time">⏱ 00:00 real time</div><div id="speed"></div></div>
+<div id="wrap">
+  <div id="left">
+    <div id="win">
+      <div id="bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span>
+        <span id="appname">—</span><div id="url">the browser Rung operates appears here</div></div>
+      <div id="screen"><div id="idle">waiting for the first UI step…</div>
+        <div id="card"><div class="k" id="ck">learned API tool</div><div class="v" id="cv">62 ms</div><div class="s" id="cs">no browser</div></div>
+      </div>
+    </div>
+  </div>
+  <div id="right">
+    <div id="ladder"><h3>The ladder · cheapest trusted interface first</h3>
+      <div class="rung" data-r="noop"><div class="n">0</div><div class="l">Already true?</div><div class="t">skip, verified</div></div>
+      <div class="rung" data-r="learned"><div class="n">1</div><div class="l">Learned API tool</div><div class="t">no model, no browser</div></div>
+      <div class="rung" data-r="documented"><div class="n">2</div><div class="l">Documented API / CLI</div><div class="t">OpenAPI, LibreOffice, SMTP</div></div>
+      <div class="rung" data-r="probation"><div class="n">3</div><div class="l">Tool on probation</div><div class="t">used, then verified</div></div>
+      <div class="rung" data-r="ui"><div class="n">4</div><div class="l">Explore the UI with the model</div><div class="t">traffic recorded → new tool</div></div>
+      <div id="stats"><span>API tools learned: <b id="sLearned">0</b></span><span>demoted: <b id="sDemoted">0</b></span><span>steps verified: <b id="sOk">0</b></span></div>
+    </div>
+    <div id="feedwrap"><div id="feedh">What Rung reads, decides, rejects and learns</div><div id="feed"></div></div>
+  </div>
+</div>
+<script>
+let last = 0, frameT = 0, learned = 0, demoted = 0, okN = 0, cardTimer = null;
+const feed = document.getElementById('feed');
+const rungs = [...document.querySelectorAll('.rung')];
+const APPS = {'7102': 'Chatter', '7104': 'Acme SSO (stock Django admin)', '7101': 'PeopleHub'};
+function ladder(r, cls){ rungs.forEach(x => x.classList.remove('active','ok','bad','gold'));
+  if(!r) return; const el = rungs.find(x => x.dataset.r === r); if(el) el.classList.add(cls); }
+function card(k, v, s){ const c = document.getElementById('card');
+  document.getElementById('ck').textContent = k; document.getElementById('cv').textContent = v; document.getElementById('cs').textContent = s;
+  c.classList.add('show'); clearTimeout(cardTimer); cardTimer = setTimeout(() => c.classList.remove('show'), 2600); }
+function add(e){
+  const d = document.createElement('div'); d.className = 'ev ' + (e.cls || '');
+  d.innerHTML = (e.icon ? `<span class="i">${e.icon}</span>` : '<span class="i"></span>') + `<span class="x">${e.text || ''}${e.sub ? `<span class="sub">${e.sub}</span>` : ''}</span>`;
+  feed.appendChild(d); while (feed.children.length > 60) feed.removeChild(feed.firstChild);
+}
+async function poll(){
+  try{
+    const r = await (await fetch('/events?after=' + last)).json();
+    for (const e of r.events){
+      last = Math.max(last, e.id); if (e.skip) continue;
+      if (e.cls === 'chapter'){ document.getElementById('chapter').textContent = e.text; }
+      add(e);
+      if (e.ladder === 'start') ladder(null);
+      else if (e.ladder === 'ui') ladder('ui', 'active');
+      else if (e.ladder === 'demoted'){ demoted++; ladder('learned', 'bad'); card('learned tool broke', 'demoted', 'falling back down the ladder'); }
+      else if (e.ladder === 'promoted'){ learned++; ladder('learned', 'gold'); card('new API tool', 'learned + promoted', 'sandbox-tested: do → verify → undo → verify'); }
+      else if (e.ladder && e.ladder !== 'fail'){ okN++; ladder(e.ladder, 'ok');
+        if (e.ladder === 'learned') card('learned API tool', (e.ms ?? '?') + ' ms', 'no model, no browser');
+        else if (e.ladder === 'documented') card(e.rung && e.rung.startsWith('script') ? 'existing tool (CLI / SMTP)' : 'documented API', (e.ms ?? '?') + ' ms', e.rung || '');
+        else if (e.ladder === 'noop') card('already true', 'skipped', 'checked against real state'); }
+      document.getElementById('sLearned').textContent = learned; document.getElementById('sDemoted').textContent = demoted; document.getElementById('sOk').textContent = okN;
+    }
+  }catch(err){}
+  setTimeout(poll, 450);
+}
+async function frame(){
+  try{
+    const m = await (await fetch('/frame.json')).json();
+    if (m.t && m.t !== frameT){ frameT = m.t;
+      document.getElementById('screen').style.backgroundImage = `url(/frame.jpg?t=${m.t})`;
+      document.getElementById('idle').style.display = 'none';
+      const u = new URL(m.url); document.getElementById('url').textContent = u.pathname + u.search;
+      document.getElementById('appname').textContent = APPS[u.port] || u.host; }
+  }catch(err){}
+  setTimeout(frame, 350);
+}
+const t0 = Date.now(), speed = new URLSearchParams(location.search).get('speed');
+if (speed){ const el = document.getElementById('speed'); el.textContent = 'video sped up ' + speed + '×'; el.style.display = 'block'; }
+setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000);
+  document.getElementById('clock').textContent = '⏱ ' + String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0') + ' real time'; }, 250);
+poll(); frame();
+</script>
+</body></html>

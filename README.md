@@ -44,6 +44,24 @@ If nothing fits, Rung asks for directions.
 
 Model calls are typed, pydantic-validated and retried with error feedback. Untrusted text goes inside `<data>` tags. The UI explorer may only type the values a task supplied, and `app.holds()`, not the model, decides when a step is done.
 
+## See it run
+
+[`docs/sample_report.md`](docs/sample_report.md) is the full output of `scripts/demo.sh` on the real model: a cold onboarding, a warm one, then the clock jumping to the start date. From the cold run's report:
+
+```
+| # | step                            | status    | how it ran                          | verified | notes                    |
+| 2 | Create the Chatter account      | DONE      | explore:llm                         | verified | 22058 ms                 |
+| 3 | Create the SSO (Acme SSO) login | DONE      | explore:llm                         | verified | 15390 ms                 |
+| 5 | Add to #analytics-standup       | DONE      | explore:llm                         | verified | from precedent; 20197 ms |
+| 6 | Add to #dashboards              | DONE      | learned:chat-synthesized_api-1a7462 | verified | from precedent; 67 ms    |
+| 7 | Add to #data                    | DONE      | learned:chat-synthesized_api-1a7462 | verified | from precedent; 58 ms    |
+| 12| Send the welcome email          | SCHEDULED |                                     |          | due 2026-10-12T09:00     |
+Flags: untrusted mail from it-helpdesk@acme-support.test can't justify any step;
+       peers suggest #finance-private, but policy FP-2 restricts it to Finance. Skipped.
+```
+
+The first channel add is done through the UI (20 s). Its recorded traffic becomes an API tool, which is sandbox-tested and then promoted, and the next channel adds take about 60 ms each with no browser. The cold run takes 82 s and 20 model calls; the warm run for the next hire takes 34 s and 6 calls. On Monday, `tick` sends the welcome emails and both runs end `done`.
+
 ## Results
 
 Real model: NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`.

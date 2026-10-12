@@ -140,6 +140,8 @@ How Rung itself evolved (details in [docs/DEVLOG.md](docs/DEVLOG.md)):
 4. **Skills:** unknown tasks find their own how-to, and nothing runs before approval. The live run found one false success (a hard-coded timestamp); it was fixed in the validator and the section re-run 5/5.
 5. **Demo:** one real run, recorded. The take exposed one more validator gap, which got a fix and a test.
 
+AI coding tools: Claude (architecture discussion and critique) and Claude Code in the Antigravity IDE for implementation, eval runs and the demo tooling. I directed the design, wrote the specs and reviewed the results.
+
 ## Limitations (honest)
 
 - **One domain, three task families plus learned skills.** People ops is the proving ground: onboarding, offboarding, reporting, plus procedures drafted from SOPs. The core (ladder, verification, saga, grounding, validation) is app-agnostic, but breadth beyond that is not yet shown.

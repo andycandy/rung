@@ -325,7 +325,7 @@ python -m rung run "Please give Kavya Reddy dashboard access" --answer approve_p
 
 # full eval, recorded; then the same eval replayed from the recording (deterministic, no network)
 RUNG_RECORD=eval/model_run.jsonl python -m eval.run_eval --random 7
-RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7
+git checkout eval-run-1 && RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7   # exact replay, at the tag
 python -m eval.run_eval --only S           # just the skill-search cases S1-S5
 
 # layer benchmarks: each layer alone on the real model

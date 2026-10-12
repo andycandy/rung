@@ -2,15 +2,14 @@
 
 **Rung** takes a short request from an employee ("Please onboard Priya, she's joining Monday") and turns it into finished, **verified** work across a company's apps: an HR system, a Slack-like chat, an SSO admin (stock Django), email, a shared Drive, and LibreOffice. It gets cheaper the more it works, because it learns direct API tools for the apps it first operates through their UI.
 
+**0 false successes · 38/41 end-to-end cases · exact replay with no model · ~60 ms per step once a tool is learned (vs ~20 s through the UI)**
+
 > **The model understands language. Code never does.**
 > Code grounds what the model said against systems of record, runs routines already verified to work, and checks real state afterwards. The model can't approve itself, raise its own privileges, or declare a step done.
 
 **▶ [Demo video (2 min 47 s, sped up 2×)](docs/rung-demo.mp4).** One continuous real run on Nemotron.
-- **Left:** the current request and its phase, above the browser Rung operates.
-- **Right:**
-  - the ladder: the step in progress, which rung served it, and what failed;
-  - the plan as a checklist, showing how and how fast each step was verified;
-  - the decisions, model and code marked apart, with the model's own reasoning.
+Left: the browser Rung drives. Right: the ladder, the plan, and every decision (model vs code).
+
 1. Cold start: Rung explores Chatter, learns its API, and the policy and the untrusted mail are enforced.
 2. Warm run: the next hire goes through the learned API in milliseconds.
 3. A task Rung has never seen: it finds `handbook/dashboards-access.md` itself, drafts a skill, and runs it once approved.
@@ -21,7 +20,7 @@ Every number on screen comes from Rung's event log. The real-time clock stays vi
 
 ## Why this design
 
-The brief asks for something narrow but genuinely autonomous. The expensive failure for an ops agent isn't "couldn't do it". It's **"said it was done, and it wasn't"**, or "did something nobody asked for". So Rung is built around **verified completion over improvisation**:
+The CentrAlign brief asks for something narrow but genuinely autonomous. The expensive failure for an ops agent isn't "couldn't do it". It's **"said it was done, and it wasn't"**, or "did something nobody asked for". So Rung is built around **verified completion over improvisation**:
 
 - **The model does what only a model can do:** read the request, judge which evidence matters, operate an unfamiliar UI, draft a procedure from prose.
 - **Deterministic code does everything that must be right:**
@@ -124,6 +123,23 @@ The three failures, none of which claimed success:
 
 Per-case logs and every recorded prompt and answer are in `eval/`. The full story, including every bug found and fixed on the way, is in **[docs/DEVLOG.md](docs/DEVLOG.md)**.
 
+## Where it came from
+
+Rung grew out of **Jarvis**, my personal assistant on Telegram, built on the same stack (Nemotron on NVIDIA NIM, SQLite, typed tool calls). Running Jarvis day to day taught the habits Rung is built on:
+- work is a job with a timed claim, so a crash never leaves it stuck (→ Rung's run lease and resume);
+- outside text is data, never instructions (→ `<data>` tags and code-computed trust flags);
+- risky inputs can't make lasting changes (voice notes in Jarvis → risk gates and approvals in Rung);
+- every change can be undone as a batch (Jarvis's nightly cleanup → Rung's saga compensation).
+
+Rung's code is new; the patterns came from Jarvis.
+
+How Rung itself evolved (details in [docs/DEVLOG.md](docs/DEVLOG.md)):
+1. **First version:** the ladder, the promoter, the saga, the sandbox company and the eval, but requests were read with code (keywords, regex) and a heuristic UI explorer. The first live-model eval found a false success.
+2. **Model-first rewrite:** every piece of code that read human language was deleted. The model reads; code grounds, validates and verifies. Live smoke tests and a full code review found 14 issues, all fixed.
+3. **41-case eval on the real model:** 0 false successes, 38/41, replayed exactly.
+4. **Skills:** unknown tasks find their own how-to, and nothing runs before approval. The live run found one false success (a hard-coded timestamp); it was fixed in the validator and the section re-run 5/5.
+5. **Demo:** one real run, recorded. The take exposed one more validator gap, which got a fix and a test.
+
 ## Limitations (honest)
 
 - **One domain, three task families plus learned skills.** People ops is the proving ground: onboarding, offboarding, reporting, plus procedures drafted from SOPs. The core (ladder, verification, saga, grounding, validation) is app-agnostic, but breadth beyond that is not yet shown.
@@ -132,6 +148,15 @@ Per-case logs and every recorded prompt and answer are in `eval/`. The full stor
 - **The model is in the critical path.** If the model is down, requests escalate instead of degrading. A full suite on Nemotron takes about 30 minutes. Once tools are learned, warm runs make 2–6 model calls.
 - **One model, one full recorded run.** Model answers vary between runs (R3 passed in the layer benchmark and failed in the eval), and run-to-run variance hasn't been measured.
 - **Code can't check meaning.** It checks that a proposed step's values exist, its citations are real and trusted, and policy allows it. It can't check that a trusted message means what the model says. Precedent-based steps therefore need confirmation on first use.
+
+## Future of this project
+
+- **Desktop apps.** The ladder, verification, saga and policy don't depend on the web. A desktop adapter would read the accessibility tree (Windows UI Automation) instead of the page's HTML, so the same explorer and state checks work on native apps. Desktop apps don't expose HTTP traffic, so tool learning would come from watchers on what the app actually does underneath: its files, COM/automation interfaces, local network calls. Not built yet.
+- **Real apps on a staging tenant** (e.g. Mattermost, Keycloak, Google Workspace), with sandbox tests pointed at staging instead of the live workspace.
+- **A second domain** (IT tickets, finance approvals) to show the core is general, not tuned to people ops.
+- **Measured reliability:** repeated eval runs, temperature 0, a second model.
+- **Faster runs:** independent steps in parallel, and fixes for the two known explorer gaps.
+- **Jarvis as the front door:** requests by Telegram or voice, with Rung doing the verified work.
 
 ## Run it
 
@@ -147,7 +172,7 @@ python -m rung inbox                                                            
 python -m rung rungs; python -m rung events <run>                                   # learned tools; a run's full log
 
 RUNG_RECORD=eval/model_run.jsonl python -m eval.run_eval --random 7                   # full eval, recorded
-RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7  # deterministic replay
+git checkout eval-run-1 && RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7   # exact replay, no key needed
 python -m eval.run_eval --only S                                                     # skill-search cases only
 python -m pytest -q tests
 ```

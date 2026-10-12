@@ -7,8 +7,9 @@
 > **The model understands language. Code never does.**
 > Code grounds what the model said against systems of record, runs routines already verified to work, and checks real state afterwards. The model can't approve itself, raise its own privileges, or declare a step done.
 
-**▶ [Demo video (2 min 47 s, sped up 2×)](docs/rung-demo.mp4).** One continuous real run on Nemotron.
-Left: the browser Rung drives. Right: the ladder, the plan, and every decision (model vs code).
+https://github.com/user-attachments/assets/b62befc8-78db-41e4-9584-b05bce5f8cfd
+
+**▶ Demo (2 min 47 s, sped up 2×):** one continuous real run on Nemotron. Left: the browser Rung drives. Right: the ladder, the plan, and every decision (model vs code). Full-quality file: [`docs/rung-demo.mp4`](docs/rung-demo.mp4).
 
 1. Cold start: Rung explores Chatter, learns its API, and the policy and the untrusted mail are enforced.
 2. Warm run: the next hire goes through the learned API in milliseconds.

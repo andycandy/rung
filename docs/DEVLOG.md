@@ -376,3 +376,69 @@ Model calls are stateless, single-turn and JSON-validated (pydantic), with the v
 - **OpenAI's code-execution computer use:** scripting APIs over clicking.
 
 What Rung contributes is engineering rather than research: a learned interface is promoted only after the task's postconditions hold on real state *and* it passes a do/undo sandbox test, and it is demoted and re-learned when its interface breaks. That lifecycle sits inside a run model that won't leave work half-done, won't claim success it can't verify, and won't let model output reach an app without passing code-side validation.
+
+## Sample run
+
+[`sample_report.md`](sample_report.md) is the full output of `scripts/demo.sh` on the real model: a cold onboarding, a warm one, then the clock jumping to the start date. From the cold run:
+
+```
+| # | step                            | status    | how it ran                          | verified | notes                    |
+| 2 | Create the Chatter account      | DONE      | explore:llm                         | verified | 22058 ms                 |
+| 3 | Create the SSO (Acme SSO) login | DONE      | explore:llm                         | verified | 15390 ms                 |
+| 5 | Add to #analytics-standup       | DONE      | explore:llm                         | verified | from precedent; 20197 ms |
+| 6 | Add to #dashboards              | DONE      | learned:chat-synthesized_api-1a7462 | verified | from precedent; 67 ms    |
+| 7 | Add to #data                    | DONE      | learned:chat-synthesized_api-1a7462 | verified | from precedent; 58 ms    |
+| 12| Send the welcome email          | SCHEDULED |                                     |          | due 2026-10-12T09:00     |
+Flags: untrusted mail from it-helpdesk@acme-support.test can't justify any step;
+       peers suggest #finance-private, but policy FP-2 restricts it to Finance. Skipped.
+```
+
+The first channel add went through the UI (20 s). Its recorded traffic became an API tool, which was sandbox-tested and promoted. The next adds took about 60 ms each, with no browser.
+
+| | cold run | warm run (next hire) |
+|---|---|---|
+| wall time | 82 s | 34 s |
+| model calls | 20 | 6 |
+
+[`img/chatter-person.png`](img/chatter-person.png) shows Chatter's person page, where the explorer manages channel memberships.
+
+## Background: Jarvis
+
+Rung grew out of Jarvis, the author's personal assistant on Telegram. It runs on the same stack: Nemotron on NVIDIA NIM, SQLite, typed tool calls. Running Jarvis day to day taught the habits Rung is built on:
+
+| Jarvis habit | where it shows up in Rung |
+|---|---|
+| work is a job with a timed claim, so a crash never leaves it stuck | the run lease and resume |
+| outside text is data, never instructions | `<data>` tags and code-computed trust flags |
+| risky inputs can't make lasting changes (voice notes in Jarvis) | risk gates and approvals |
+| every change can be undone as a batch (Jarvis's nightly cleanup) | saga compensation |
+
+Rung's code is new; the patterns came from Jarvis.
+
+How Rung evolved:
+
+1. **First version.**
+   - Built: the ladder, the promoter, the saga, the sandbox company and the eval.
+   - Requests were still read with code (keywords, regex), and the UI explorer was heuristic.
+   - The first live-model eval found a false success.
+2. **Model-first rewrite.**
+   - Every piece of code that read human language was deleted.
+   - Live smoke tests and a full code review then found 14 issues, all fixed (tables above).
+3. **41-case eval on the real model:** 0 false successes, 38/41, replayed exactly.
+4. **Skills.**
+   - Unknown tasks find their own how-to.
+   - The live run found one false success (a hard-coded timestamp). The validator was fixed and the section re-run: 5/5.
+5. **Demo.** One real run, recorded. The take exposed one more validator gap (`requires` fields), which got a fix and a test.
+
+## Future work
+
+- **Desktop apps.**
+  - The ladder, verification, saga and policy don't depend on the web.
+  - A desktop adapter would read the accessibility tree (Windows UI Automation) instead of the page's HTML, so the same explorer and state checks would work on native apps.
+  - Desktop apps don't expose HTTP traffic, so tools would be learned from what the app does underneath: its files, COM/automation interfaces and local network calls.
+  - Not built yet.
+- **Real apps on a staging tenant** (e.g. Mattermost, Keycloak, Google Workspace), with sandbox tests pointed at staging instead of the live workspace.
+- **A second domain** (IT tickets, finance approvals), to show the core isn't tuned to people ops.
+- **Measured reliability:** repeated eval runs, temperature 0, a second model.
+- **Faster runs:** independent steps in parallel, and fixes for the two known explorer gaps.
+- **Jarvis as the front door:** requests by Telegram or voice, with Rung doing the verified work.

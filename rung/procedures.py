@@ -88,6 +88,14 @@ def validate(proc: dict) -> list[str]:
                 errs.append(f"{where}: '{f}' is not an observable field of {dl['app']}/{dl['entity']} (allowed: {sorted(allowed)})")
         if set((dl.get("key") or {}).keys()) != set(spec.get("key", [])):
             errs.append(f"{where}: key must be exactly {spec.get('key')} for {dl['app']}/{dl['entity']}")
+        if st.get("not_before") is not None:
+            try:
+                relative = bool(placeholders(str(st["not_before"])))
+            except ValueError:
+                relative = False
+            if not relative:   # a procedure is reused for every future request: a fixed time can't be right
+                errs.append(f"{where}: not_before {st['not_before']!r} is a fixed time; it must be relative to the request "
+                            "(a placeholder such as {employee.start_date}, {last_day} or {date}), or left out to run at once")
         if not st.get("description"):
             errs.append(f"{where}: needs a description")
         for text in _strings(st):

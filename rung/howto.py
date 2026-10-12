@@ -49,7 +49,8 @@ def directions_question(procs: dict, why: str) -> dict:
 
 
 def approval_question(proc: dict, found_in: list[str]) -> dict:
-    steps = "\n".join(f"  {i + 1}. {st['description']} -> {st['delta']}" for i, st in enumerate(proc["steps"]))
+    steps = "\n".join(f"  {i + 1}. {st['description']} -> {st['delta']}" + (f" (not before {st['not_before']})" if st.get("not_before") else "")
+                      for i, st in enumerate(proc["steps"]))
     return {"key": "approve_procedure", "drafted": proc["task_type"],
             "q": f"I found how to do this in: {', '.join(found_in)}. Proposed procedure '{proc['task_type']}':\n{steps}\n"
                  "Reply 'approve_procedure: yes' to save and run it, or 'sop: <path>' to point me elsewhere."}

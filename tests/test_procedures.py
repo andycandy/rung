@@ -32,3 +32,13 @@ def test_placeholders_must_be_defined():
     p = {"task_type": "t", "description": "t", "steps": [{"id": "s", "description": "Add to #{nope}",
          "delta": {"app": "chat", "entity": "channel_member", "key": {"channel": "{nope}", "user": "{employee.chat_username}"}, "expect": {"exists": True}}}]}
     assert any("'{nope}' is never defined" in e for e in validate(p))
+
+
+def test_a_fixed_time_in_a_drafted_procedure_is_rejected():
+    # what the model drafted from the dashboards SOP in eval S2: both steps parked until a hard-coded time
+    step = {"id": "join", "description": "Add to #dashboards", "not_before": "2026-10-08T09:00:00Z",
+            "delta": {"app": "chat", "entity": "channel_member", "key": {"channel": "dashboards", "user": "{username}"}, "expect": {"exists": True}}}
+    p = {"task_type": "t", "description": "t", "derive": [{"name": "username", "fn": "username_for"}], "steps": [step]}
+    assert any("fixed time" in e for e in validate(p))
+    step["not_before"] = "{employee.start_date}T09:00:00+05:30"
+    assert not any("fixed time" in e for e in validate(p))

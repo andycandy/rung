@@ -18,7 +18,7 @@ All numbers below come from runs on NVIDIA NIM `nvidia/nemotron-3-super-120b-a12
 |---|---|
 | main eval, 41 cases (tag `eval-run-1`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
 | replay of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
-| unknown-task skill search, S1–S5 (latest code) | **5/5, 0 false successes**; an untrusted "how-to" mail the model picked was rejected by code |
+| unknown-task skill search, S1–S5 (skills code, after `eval-run-1`) | **5/5, 0 false successes**; an untrusted "how-to" mail the model picked was rejected by code |
 | tests | `pytest -q`: 85 pass: 83 unit tests, plus 2 against the live sandbox (the replay test and the SSO-stylesheet test) |
 | language-reading code left in `rung/` | none: the spec's grep returns nothing |
 | known weak spots | the UI explorer can't disable an SSO login or add a channel on Chatter's third UI variant; once, the model read a two-person request as "not a request". All three fail honestly, none claims success |
@@ -154,7 +154,7 @@ grep -nE "re\.(search|match|findall|sub|fullmatch)|\.lower\(\) in |STOP|NEGATION
 # (no output)
 ```
 
-Three regular expressions remain in `rung/`, all on structured data: `EMAIL_SYNTAX` (e-mail address syntax), `store.SECRET_KEYS` (redacting header and field *names* such as `cookie` or `password` before anything is logged), the Chatter DOM probe that reads `#channel` tokens off a rendered membership list (state observation, part of the probes the rewrite left unchanged), and `client.WALL_CLOCK`, which masks timestamps and Django's password-salt summary when computing a replay key (never applied to what the model reads). Plus the promoter's and HTTP layer's URL/telemetry patterns, which the spec exempts.
+Four regular expressions remain in `rung/`, all on structured data. Three are in Python: `EMAIL_SYNTAX` (e-mail address syntax), `store.SECRET_KEYS` (redacting header and field *names* such as `cookie` or `password` before anything is logged), and `client.WALL_CLOCK`. The fourth is JavaScript in the Chatter DOM probe, which reads `#channel` tokens off a rendered membership list (state observation, part of the probes the rewrite left unchanged). `WALL_CLOCK` masks timestamps and Django's password-salt summary when computing a replay key (never applied to what the model reads). Plus the promoter's and HTTP layer's URL/telemetry patterns, which the spec exempts.
 
 ## Results (independent oracle)
 

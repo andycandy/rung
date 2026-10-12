@@ -1,4 +1,4 @@
-"""Start the whole sandbox company: PeopleHub (HR), Chatter (chat), Mailroom (SMTP + API).
+"""Start the whole sandbox company: PeopleHub (HR), Chatter (chat), Mailroom (SMTP + API), Acme SSO (Django admin).
 
   python -m sandbox.run_all          # foreground
 """

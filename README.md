@@ -88,7 +88,7 @@ Real model: NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`.
 |---|---|
 | **main eval**, 41 cases (tag `eval-run-1`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
 | **replay** of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
-| **skill search**, S1–S5 (latest code) | **5/5, 0 false successes**. In S4 the model picked an untrusted "how-to" trap mail with high confidence, and **code rejected it** |
+| **skill search**, S1–S5 (skills code, after `eval-run-1`) | **5/5, 0 false successes**. In S4 the model picked an untrusted "how-to" trap mail with high confidence, and **code rejected it** |
 | tests | 85 pass: 83 unit tests, plus 2 against the live sandbox (a recorded run replays exactly; the SSO stylesheet changes nothing the agent reads) |
 
 The 41 cases cover:

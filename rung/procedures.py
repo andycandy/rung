@@ -2,9 +2,9 @@
 against what the system can actually do (known apps, entities, observable fields,
 library checks/derivations), and manages model-drafted ones through human approval.
 
-Flow for an unknown task: the requester points at a prose SOP on the Drive ->
-the model drafts a structured procedure -> it is validated here -> the requester
-approves -> it is saved to memory/procedures/ and used from then on.
+Flow for an unknown task: a how-to found on the Drive or in ops@ mail (rung.howto), or a prose SOP
+the requester points at (`sop:`) -> the model drafts a structured procedure -> it is validated here ->
+the draft waits in drafts/ -> the requester approves -> it moves to memory/procedures/ and is used from then on.
 """
 from __future__ import annotations
 

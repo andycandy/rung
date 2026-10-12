@@ -6,9 +6,10 @@ no token), so it must learn this app by operating the UI -- and may synthesize a
 API tool from the traffic it observes.
 
 Failure-injection flags (sandbox/flags.json):
-  chat_ui_variant: 1|2     relabel/re-id the UI (simulates a redesign)
+  chat_ui_variant: 1|2|3   redesigns: 2 relabels and re-ids the UI, 3 uses labels the explorer never saw
   chat_api_version: 1|2    move the JSON API; the old version answers 410 Gone
-  chat_archived: [names]   channels that reject new members
+  chat_archived: [names]   channels that reject new members (409)
+  chat_signup_disabled     account creation fails (503, seat limit reached)
 """
 from __future__ import annotations
 

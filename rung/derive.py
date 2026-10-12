@@ -1,16 +1,17 @@
 """Library of checks and derivations that procedures compose in YAML.
 
 Checks may add questions (the ask budget: only what context can't answer).
-Derivations compute values from systems of record and precedent, and record
-*where* each value came from as a Gap with a source.
+Derivations compute values from systems of record and record *where* each value
+came from as a Gap with a source. Nothing here reads human text: dates arrive as
+ISO strings already grounded (rung.ground); variable steps such as team channels
+come from validated model proposals (rung.proposals).
 """
 from __future__ import annotations
 
 from datetime import timedelta
 
-from rung import policy, precedent, store
 from rung.apps import registry
-from rung.types import Citation, Delta, Gap, Intent
+from rung.types import Gap
 from sandbox.common import now
 
 
@@ -97,81 +98,10 @@ def manager_of(ctx, goal, scope, employee):
     return {"full_name": "your manager", "work_email": goal.requester}
 
 
-def team_channels(ctx, goal, scope, employee, username):
-    """Which channels does this team use? Precedent (peers, chat history, mail) filtered by
-    written policy, plus human corrections."""
-    chans, cites, stats = precedent.peer_channels(ctx, employee)
-    ctx.log("precedent.peers", {"channels": chans, "stats": stats})
-    goal.gaps.append(Gap("team_channels", list(chans), "resolved",
-                         f"precedent: channel memberships of {stats['peers']} active {employee['title']}s in {employee['team']}"))
-    try:
-        cites += precedent.chat_announcements(ctx, employee["title"])
-    except Exception as ex:  # noqa: BLE001
-        ctx.log("precedent.chat_error", {"error": str(ex)})
-    known = set(stats["counts"]) | {c.ref.lstrip("#") for c in cites if c.ref.startswith("#")}  # channels seen in the workspace
-    for cor in store.corrections(goal.task_type):
-        if cor["scope"] and cor["scope"] not in (employee.get("title"), employee.get("team")):
-            continue
-        for c in cor["body"].get("add_channels", []):
-            if c not in chans:
-                chans.append(c)
-                cites.append(Citation("correction", f"#{c}", f"correction #{cor['id']} on {cor['ts'][:10]}"))
-        for c in cor["body"].get("remove_channels", []):
-            if c in chans:
-                chans.remove(c)
-                goal.flags.append({"kind": "correction", "detail": f"#{c} not added, per correction #{cor['id']}"})
-    words = {w for w in (employee.get("title", "") + " " + employee.get("team", "")).lower().split() if len(w) > 3}
-    mails = []
-    for m in precedent.mail_instructions(ctx):
-        text = (m["subject"] + " " + m["excerpt"]).lower()
-        if m["trusted_sender"] and not any(w.rstrip("s") in text for w in words):
-            continue  # a trusted note about some other role doesn't apply to this hire
-        mails.append(m)
-    req = precedent.request_asks(ctx, scope.get("request", ""))
-    if req["candidates"]:
-        mails.append(req)
-    for m in mails:
-        for cand in m["candidates"]:
-            if cand.get("source") == "model" and cand["value"] not in known:
-                goal.flags.append({"kind": "precedent_rejected",
-                                   "detail": f"Mail '{m['subject']}' from {m['sender']} seems to ask for channel '{cand['value']}', "
-                                             "but no such channel is in use. Not done.", "source": f"mail #{m['id']}"})
-                continue
-            d = Delta("chat", "user", {"username": username}, {"role": "admin"}) if cand["kind"] == "role" else \
-                Delta("chat", "channel_member", {"channel": cand["value"], "user": username}, {"exists": True})
-            it = Intent("", d)
-            it.risk = policy.classify(it)
-            why = [] if m["trusted_sender"] else [f"sender {m['sender']} is outside the company domain"]
-            if not policy.precedent_allowed(it.risk):
-                why.append(f"precedent may not authorize {it.risk} actions")
-            why += [v["reason"] for v in policy.violations(it, employee)]
-            if m.get("from_request"):
-                why = [v["reason"] for v in policy.violations(it, employee)]
-                if it.risk == "elevated":
-                    why.append("elevated changes need an IT ticket, not an onboarding request")
-                if why:
-                    goal.flags.append({"kind": "refused_request", "detail": f"You asked for {cand['kind']} = {cand['value']}: not done. {'; '.join(why)}"})
-                elif cand["kind"] == "channel" and cand["value"] not in chans:
-                    chans.append(cand["value"])
-                    cites.append(Citation("request", f"#{cand['value']}", "asked for in the request"))
-                    scope.setdefault("_request_items", []).append(cand["value"])
-                continue
-            if why:
-                goal.flags.append({"kind": "suspicious_instruction" if not m["trusted_sender"] else "precedent_rejected",
-                                   "detail": f"Mail '{m['subject']}' from {m['sender']} asks for {cand['kind']} = {cand['value']}. "
-                                             f"Not done: {'; '.join(why)}.", "source": f"mail #{m['id']}"})
-            elif cand["kind"] == "channel" and cand["value"] not in chans:
-                chans.append(cand["value"])
-                cites.append(Citation("precedent:mail", f"#{cand['value']}", f"mail #{m['id']}: {m['excerpt'][:120]}"))
-    scope["_cites"] += cites
-    scope["_precedent_items"] += [c for c in chans if c not in scope.get("_request_items", [])]
-    return chans
-
-
 DONE_CHANNELS = "\u27e8done_channels\u27e9"
 
 
-def join_channels(ctx, goal, scope, items):
+def join_channels(ctx, goal, scope):
     """Resolved at *execution* time from the channel steps that actually succeeded, so a welcome
     message never announces access that failed or was declined."""
     return DONE_CHANNELS
@@ -186,7 +116,7 @@ def user_channels(ctx, goal, scope, username, exclude=("general",)):
 
 def request_date(ctx, goal, scope, label="date"):
     d = scope.get("date")
-    goal.gaps.append(Gap(label, d, "resolved", f"request ('{scope.get('date_text')}')"))
+    goal.gaps.append(Gap(label, d, "resolved", f"request ('{scope.get('date_text')}', read by the model, checked as an ISO date)"))
     return d
 
 
@@ -222,5 +152,5 @@ def requester(ctx, goal, scope):
     return goal.requester
 
 
-FNS = {f.__name__: f for f in [username_for, manager_of, team_channels, join_channels, user_channels, request_date,
+FNS = {f.__name__: f for f in [username_for, manager_of, join_channels, user_channels, request_date,
                               month_start, today, hr_query, format_rows, count, requester, split_name]}

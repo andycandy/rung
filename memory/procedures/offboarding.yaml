@@ -1,7 +1,7 @@
 # Offboarding -- added as data only (no code changes): it composes the same
 # library checks/derivations and the same apps as onboarding.
 task_type: offboarding
-match: [offboard, offboarding, leaving, last day, leaves, resigned, resigning, "re:remove (his|her|their) access", "re:\\bquit"]
+description: Remove a leaver's access at the end of their last day -- channels, chat and SSO accounts, HR status -- and tell their manager.
 subject: {entity: employee, statuses: [active, onboarding]}
 requires: [full_name, work_email]
 checks: [date_required]

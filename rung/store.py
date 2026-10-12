@@ -41,6 +41,7 @@ def con() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS procedures(task_type TEXT PRIMARY KEY, body TEXT, sources TEXT, confirmed INTEGER, updated TEXT);
         CREATE TABLE IF NOT EXISTS corrections(id INTEGER PRIMARY KEY, task_type TEXT, scope TEXT, body TEXT, ts TEXT);
         CREATE TABLE IF NOT EXISTS confirmations(key TEXT PRIMARY KEY, answer TEXT, ts TEXT);
+        CREATE TABLE IF NOT EXISTS nav_paths(key TEXT PRIMARY KEY, paths TEXT, ts TEXT);
         """
     )
     return c
@@ -164,6 +165,17 @@ def get_confirmation(key):
 def put_confirmation(key, answer):
     with con() as c:
         c.execute("INSERT OR REPLACE INTO confirmations VALUES(?,?,?)", (key, answer, now().isoformat()))
+
+
+def get_nav_paths(key) -> list[str]:
+    with con() as c:
+        r = c.execute("SELECT paths FROM nav_paths WHERE key=?", (key,)).fetchone()
+    return json.loads(r["paths"]) if r else []
+
+
+def put_nav_paths(key, paths: list[str]):
+    with con() as c:
+        c.execute("INSERT OR REPLACE INTO nav_paths VALUES(?,?,?)", (key, json.dumps(paths), now().isoformat()))
 
 
 def artifacts_dir(rid: str) -> Path:

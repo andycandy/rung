@@ -7,28 +7,22 @@ This app stays on the UI rung by design -- the honest result for form-post apps.
 """
 from __future__ import annotations
 
-import secrets
-import time
-
 from rung.apps.base import App
 from rung.ctx import vault
-from rung.explore.explorer import HeuristicExplorer, LLMExplorer
+from rung.explore.explorer import explore_with_model
 from rung.types import Delta, ExecResult
 from sandbox.common import DOMAIN, url
 
 
 def ui_login(ctx, ab, path: str, creds: dict, app: str):
-    """Generic login: fill the password field and the user-ish field, submit the form."""
+    """Generic login, by form structure: the password input, and the text/e-mail input in the same form."""
     ab.goto(path)
     snap = ab.snapshot()
-    form = None
-    for e in snap["elements"]:
-        lab = (e.get("label") or "").lower()
-        if e["tag"] == "input" and e.get("type") == "password":
-            ab.fill(e["id"], creds["password"])
-            form = e.get("form")
-        elif e["tag"] == "input" and ("user" in lab or "login" in lab or "email" in lab):
-            ab.fill(e["id"], creds["username"])
+    pwd = next(e for e in snap["elements"] if e["tag"] == "input" and e.get("type") == "password")
+    form = pwd.get("form")
+    user = next(e for e in snap["elements"] if e["tag"] == "input" and e.get("form") == form and e.get("type") in ("text", "email"))
+    ab.fill(user["id"], creds["username"])
+    ab.fill(pwd["id"], creds["password"])
     btn = next(e for e in snap["elements"] if e.get("form") == form and (e["tag"] == "button" or e.get("type") == "submit"))
     ab.click(btn["id"])
     ab._logged_in = True
@@ -73,30 +67,7 @@ class SSOApp(App):
         return {**delta.key, **{k: v for k, v in delta.expect.items() if k != "exists"}, **args}
 
     def explore(self, ctx, delta: Delta, args: dict) -> ExecResult:
-        ab = self.ab(ctx)
-        explorer = LLMExplorer(ctx.model) if ctx.model else HeuristicExplorer()
-        check = lambda: self.holds(ctx, delta)[0]  # noqa: E731
-        tag = f"explore-{secrets.token_hex(3)}"
-        ab.start_recording(tag)
-        t0 = time.time()
-        try:
-            tr = explorer.run(ab, delta, self.values(delta, args), check=check, start=self.HOME)
-        except Exception as ex:  # noqa: BLE001
-            ctx.log("llm.error", {"call": "explore_step", "error": str(ex)})
-            explorer = HeuristicExplorer()
-            tr = explorer.run(ab, delta, self.values(delta, args), check=check, start=self.HOME)
-        if tr.gave_up and isinstance(explorer, LLMExplorer):
-            ctx.log("explore.fallback", {"from": explorer.name, "reason": tr.gave_up})
-            ctx.stats["llm_calls"] += tr.llm_calls
-            explorer = HeuristicExplorer()
-            tr = explorer.run(ab, delta, self.values(delta, args), check=check, start=self.HOME)
-        rec = ab.stop_recording()
-        shot = ab.screenshot(f"sso-{delta.entity}-{tag}")
-        ctx.stats["explore_steps"] += 1
-        ctx.stats["llm_calls"] += tr.llm_calls
-        return ExecResult(ok=not tr.gave_up, rung=explorer.name, detail=tr.gave_up or f"{len(tr.actions)} UI actions via {tr.pages}",
-                          ms=int((time.time() - t0) * 1000), llm_calls=tr.llm_calls, recording=rec,
-                          data={"actions": tr.actions, "pages": tr.pages, "screenshot": shot})
+        return explore_with_model(ctx, self, delta, self.values(delta, args), shot_prefix=f"sso-{delta.entity}")
 
     def inverse(self, delta, before):
         if delta.expect.get("exists") is True:

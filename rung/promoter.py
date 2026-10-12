@@ -200,7 +200,11 @@ META = {meta}
 
 
 class Drift(Exception):
-    pass
+    status = None   # HTTP status of the unexpected response, if any
+
+
+class SchemaDrift(Drift):
+    """The response no longer has the shape the tool was learned from."""
 
 
 class LookupMiss(Drift):
@@ -213,12 +217,14 @@ def _q(x):
 
 def _check(r, status, keys=()):
     if r.status_code != status:
-        raise Drift(f"{{r.request.method}} {{r.request.url.path}} -> {{r.status_code}} (expected {{status}}): {{r.text[:200]}}")
+        ex = Drift(f"{{r.request.method}} {{r.request.url.path}} -> {{r.status_code}} (expected {{status}}): {{r.text[:200]}}")
+        ex.status = r.status_code
+        raise ex
     if keys:
         got = r.json()
         missing = [k for k in keys if k not in got]
         if missing:
-            raise Drift(f"response schema drift: missing {{missing}}")
+            raise SchemaDrift(f"response schema drift: missing {{missing}}")
 
 
 def _find(data, field, value):

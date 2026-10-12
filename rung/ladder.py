@@ -21,6 +21,13 @@ from rung.types import Delta, ExecResult
 DEMOTE_AFTER = 2  # consecutive verified failures (hard errors demote immediately)
 
 
+def tool_broken(ex: Exception) -> bool:
+    """Demote a learned tool only when the interface itself changed: the endpoint is gone
+    (404/405/410) or the response schema drifted. A 409/422 (archived channel, bad input),
+    a lookup miss or any other error is a failed attempt, not a broken tool."""
+    return getattr(ex, "status", None) in (404, 405, 410) or type(ex).__name__ == "SchemaDrift"
+
+
 def _run_learned(ctx, app, r, delta, values):
     from rung.promoter import load_tool
     tool = load_tool(r["path"])
@@ -75,10 +82,8 @@ def ensure(ctx, delta: Delta, args: dict | None = None, depth: int = 0) -> ExecR
             attempts.append({"rung": f"learned:{r['id']}", "ok": False, "detail": str(ex)})
             continue
         except Exception as ex:  # noqa: BLE001
-            used = store.record_rung_use(r["id"], False, 0)
-            # a lookup miss can be bad input (a channel that doesn't exist), so it only counts toward DEMOTE_AFTER
-            hard = type(ex).__name__ == "Drift" or "410" in str(ex)
-            if hard or (used and used["consecutive_failures"] >= DEMOTE_AFTER):
+            store.record_rung_use(r["id"], False, 0)
+            if tool_broken(ex):
                 store.update_rung(r["id"], status="demoted", note=f"{type(ex).__name__}: {ex}")
                 ctx.log("rung.demoted", {"rung": r["id"], "reason": str(ex)})
             attempts.append({"rung": f"learned:{r['id']}", "ok": False, "detail": f"{type(ex).__name__}: {ex}"})

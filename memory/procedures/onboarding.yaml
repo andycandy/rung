@@ -1,18 +1,28 @@
 # Structured procedure for onboarding. Steps cite the People-team SOP on the Drive.
 # Team channels are NOT listed here: the SOP only says "the channels their team uses",
-# so they are mined from precedent (how peers are set up) on every run.
+# so on every run the model proposes them from gathered evidence (peer setups, mail,
+# chat, the SOP) and code validates each proposal (rung/proposals.py).
 task_type: onboarding
-match: [onboard, onboarding, new joiner, new hire, joining, starts on, set up, "re:sort (out )?(her|his|their) accounts", "re:get \\w+ set up"]
+description: Set up a new joiner (or a rehire) who is about to start -- accounts, team channels, welcome pack and first-day email.
 subject: {entity: employee, statuses: [offer_accepted, onboarding]}
 requires: [full_name, title, team, start_date, work_email]
 checks: [required_fields, date_agreement, existing_account]
 derive:
   - {name: username, fn: username_for, args: {employee: "{employee}"}}
   - {name: manager, fn: manager_of, args: {employee: "{employee}"}}
-  - {name: team_channels, fn: team_channels, args: {employee: "{employee}", username: "{username}"}}
-  - {name: team_channels_text, fn: join_channels, args: {items: "{team_channels}"}}
+  - {name: team_channels_text, fn: join_channels}
   - {name: first_name, fn: split_name, args: {full_name: "{employee.full_name}", part: first}}
   - {name: last_name, fn: split_name, args: {full_name: "{employee.full_name}", part: last}}
+propose:
+  about: >-
+    Which chat channels to add them to: the channels their team uses for someone with their title and team
+    (see how peers with the same title and team are set up), plus anything the SOP or messages say applies to
+    this role. One channel_member step per channel.
+  min_steps: 1                         # every team uses at least one channel: an empty answer is retried, then escalated
+  entities: [chat.channel_member]      # all the model may propose here (explicit asks are validated separately)
+  evidence: [peers, mail, chat, sop]
+  sop: handbook/onboarding-sop.md
+  after: hr_link_chat
 steps:
   - id: hr_onboarding
     description: Set HR status to onboarding
@@ -43,12 +53,6 @@ steps:
     delta: {app: hr, entity: employee, key: {id: "{employee.id}"}, expect: {chat_username: "{username}"}}
     required: false
     cite: "derived (keeps HR as system of record)"
-  - id: channel
-    foreach: "{team_channels}"
-    description: "Add to #{item}"
-    delta: {app: chat, entity: channel_member, key: {channel: "{item}", user: "{username}"}, expect: {exists: true}}
-    required: false
-    cite: "handbook/onboarding-sop.md step 3"
   - id: welcome_pack
     description: Generate the welcome pack from the Drive template
     delta: {app: docs, entity: document, key: {path: "employees/{username}/welcome_pack.pdf"},

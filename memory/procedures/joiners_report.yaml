@@ -1,6 +1,6 @@
 # A read-heavy reporting task (different family): HR query -> PDF via LibreOffice -> email.
 task_type: joiners_report
-match: [who joined, joiners, new joiners report, headcount, report]
+description: A PDF report of who joined this month and who starts soon, from HR, e-mailed to the requester.
 subject: {entity: none}
 derive:
   - {name: month_start, fn: month_start}

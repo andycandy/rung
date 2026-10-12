@@ -1,164 +1,73 @@
 """Understanding: request -> GoalSpec (resolved subject, gaps, questions, intents).
 
 Split of responsibility:
-  * the model (or the offline parser) only *extracts* what the request says;
-  * code resolves it against systems of record, checks the requester's authority,
-    mines precedent, applies policy and builds the plan from a structured procedure.
-Every unstated detail ends up as a Gap: resolved (with source), default, or ask.
+  * the model reads the request -- one typed call, `understand_request` -- and later proposes
+    the variable steps of the plan from gathered evidence (`propose_steps`);
+  * code grounds what the model said against systems of record (rung.ground), checks the
+    requester's authority, validates every proposed step (rung.proposals), applies policy and
+    builds the plan from a structured procedure.
+Code never reads the request for meaning. If the model can't produce a valid reading, the
+run escalates; there is no parser to fall back to.
 """
 from __future__ import annotations
 
-import re
+import fnmatch
+import string
+from datetime import timedelta
 from pathlib import Path
 
 import yaml
 
-from rung import dates, derive, policy, store
+from rung import derive, policy, precedent, proposals, store
 from rung.apps import registry
+from rung.ground import Grounded, ground
 from rung.types import Citation, Delta, Gap, GoalSpec, Intent
 from sandbox.common import DRIVE, now
 
 PROC_DIR = Path(__file__).resolve().parent.parent / "memory" / "procedures"
-# generic English only; name candidates are further filtered by whether PeopleHub knows them
-STOP = set(dates.WEEKDAYS) | set(dates.MONTHS) | {
-    "please", "pls", "hi", "hey", "hello", "the", "a", "an", "our", "can", "could", "would", "will", "you", "i", "we", "me", "us",
-    "she", "he", "they", "her", "his", "their", "them", "him", "today", "tomorrow", "next", "this", "thanks", "thank", "and",
-    "also", "too", "is", "are", "was", "be", "to", "for", "of", "on", "in", "at", "with", "from", "as", "by", "it", "its",
-    "new", "get", "set", "up", "sort", "out", "back", "us", "team", "starting", "starts", "start", "joining", "joins", "day",
-    "last", "first", "week", "month", "end", "morning", "asap", "now", "all", "any", "some", "who", "what", "everyone",
-    "has", "have", "had", "been", "said", "will", "just", "there", "here", "that", "so", "if", "not", "do", "does", "make", "add"}
-NEGATION = re.compile(r"\b(don'?t|do not|not (be )?joining|isn'?t (joining|coming|starting)|no longer|cancel+(ed)?|withdr[ae]wn?|"
-                      r"hold off|rescinded|never mind|not anymore|anymore)\b", re.I)
-EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+NO_MODEL = "Rung needs a model (set RUNG_MODEL)"
 
 
 def procedures() -> dict:
     return {p.stem: yaml.safe_load(p.read_text()) for p in sorted(PROC_DIR.glob("*.yaml"))}
 
 
-def _match(pattern: str, low: str) -> bool:
-    if pattern.startswith("re:"):
-        return bool(re.search(pattern[3:], low))
-    return bool(re.search(rf"\b{re.escape(pattern)}\b", low))
+def known_tasks(procs: dict) -> dict:
+    return {k: p.get("description", "") for k, p in procs.items()}
 
 
-# ------------------------------------------------------------------ extraction (model or offline)
-def extract(ctx, request: str) -> dict:
-    procs = procedures()
-    today = now().astimezone().date()
-    iso, phrase = dates.resolve(request, today)
-    base = {"date": iso, "date_text": phrase, "negated": bool(NEGATION.search(request)), "emails": EMAIL.findall(request)}
-    if ctx.model:
-        from rung.llm.calls import resolve_goal
-        ctx.stats["llm_calls"] += 1
-        try:
-            out = resolve_goal(ctx.model, request, {k: v.get("match", []) for k, v in procs.items()}).model_dump()
-            return {**base, **{k: v for k, v in out.items() if v is not None}, "mentions": _merge_mentions(request, out.get("person"))}
-        except Exception as ex:  # noqa: BLE001 -- fall back to the offline parser, and say so
-            ctx.log("llm.error", {"call": "resolve_goal", "error": str(ex)})
-    low = request.lower()
-    scores = {k: sum(1 for m in p.get("match", []) if _match(m, low)) for k, p in procs.items()}
-    top = max(scores.values()) if scores else 0
-    winners = [k for k, v in scores.items() if v == top and v > 0]
-    if len(winners) > 1:
-        return {**base, "task_type": None, "ambiguous": winners, "mentions": _mentions(request)}
-    return {**base, "task_type": winners[0] if winners else None, "mentions": _mentions(request)}
+def today_str(t=None) -> str:
+    """Today plus a four-week calendar. Models are unreliable at date arithmetic ("Monday" from a
+    Thursday came back as a Tuesday), so code supplies the facts and the model only looks them up."""
+    t = t or now().date()
+    days = " | ".join(f"{(t + timedelta(days=i)).strftime('%a')} {(t + timedelta(days=i)).isoformat()}" + (" (today)" if i == 0 else "")
+                      for i in range(28))
+    return f"{t.isoformat()} ({t.strftime('%A')}), timezone Asia/Kolkata (UTC+05:30)\nCalendar: {days}"
 
 
-def _mentions(request: str, person: str | None = None) -> list[str]:
-    """Runs of consecutive candidate-name words ('Priya', 'Karan Shah', 'priya sharma'), or e-mails."""
-    procs = procedures()
-    task_words = {w for p in procs.values() for m in p.get("match", []) if not m.startswith("re:") for w in m.split()}
-    text = EMAIL.sub(" , ", person or request)
-    out, cur = [], []
-    for tok in re.findall(r"[A-Za-z][A-Za-z'.-]*|[^\sA-Za-z]+", text):
-        w = re.sub(r"'s$|[.']$", "", tok).lower()
-        if re.fullmatch(r"[a-z][a-z-]+", w) and w not in STOP and w not in task_words and len(w) > 1:
-            cur.append(w)
-        else:
-            if cur:
-                out.append(" ".join(cur))
-            cur = []
-    if cur:
-        out.append(" ".join(cur))
-    return out + EMAIL.findall(person or request)
-
-
-def _merge_mentions(request: str, person: str | None) -> list[str]:
-    """The model names one person; the request may name more ('Priya ... karan.shah@acme.test too').
-    Keep the model's mentions and add every offline mention it doesn't already cover, so a
-    second person is split out instead of silently dropped."""
-    model = _mentions(request, person) if person else []
-    covered = [set(m.split()) for m in model]
-    extra = [m for m in _mentions(request) if m not in model and not any(set(m.split()) <= c for c in covered)]
-    return model + extra
-
-
-# ------------------------------------------------------------------ entity resolution
-def _resolve_mention(ctx, mention: str):
+def _requester(ctx, requester: str) -> dict | None:
     hr = registry.get("hr")
-    if "@" in mention:
-        return [e for e in hr.search(ctx, q=mention) if (e.get("work_email") or "").lower() == mention.lower()]
-    toks = mention.split()
-    known = [t for t in toks if hr.search(ctx, q=t)]   # drop words PeopleHub has never heard of ("accounts", "sorted")
-    if not known:
-        return []
-    cands = {e["id"]: e for e in hr.search(ctx, q=known[0])}
-    return [e for e in cands.values() if all(t in e["full_name"].lower().split() for t in known)]
+    return next((e for e in hr.search(ctx, q=requester) if (e.get("work_email") or "").casefold() == requester.casefold()), None)
 
 
-def resolve_subjects(ctx, proc: dict, ex: dict, answers: dict) -> tuple[list[dict], list[Gap]]:
-    """-> (resolved employees, gaps). More than one employee means the request names several people."""
-    hr = registry.get("hr")
-    statuses = proc["subject"].get("statuses")
-    if answers.get("subject"):
-        try:
-            emp = hr.probe(ctx, "employee", {"id": int(str(answers["subject"]).strip().lstrip("#[").rstrip("]"))})[0]
-        except (ValueError, TypeError):
-            emp = None
-        if not emp or (statuses and emp["status"] not in statuses):
-            return [], [Gap("subject", None, "ask", question=f"'{answers['subject']}' isn't a PeopleHub id this task applies to "
-                                                             f"(needs status {statuses}). Which person (id)?")]
-        return [emp], [Gap("subject", emp["full_name"], "resolved", f"answer from requester (PeopleHub #{emp['id']})")]
-    mentions = ex.get("mentions") or []
-    resolved, gaps, seen = [], [], set()
-    for m in mentions:
-        cands = _resolve_mention(ctx, m)
-        if not cands:
-            continue
-        relevant = [e for e in cands if not statuses or e["status"] in statuses]
-        if len(relevant) == 1:
-            e = relevant[0]
-            if e["id"] in seen:
-                continue
-            seen.add(e["id"])
-            note = f"PeopleHub #{e['id']} ({e['status']}) from '{m}'"
-            others = [c for c in cands if c is not e]
-            if others:
-                note += "; ignored (status not " + "/".join(statuses) + "): " + ", ".join(f"{c['full_name']} ({c['status']})" for c in others)
-            resolved.append(e)
-            gaps.append(Gap("subject", e["full_name"], "resolved", note))
-        elif len(relevant) > 1:
-            opts = "; ".join(f"[{e['id']}] {e['full_name']} - {e['title']}, {e['team']}, {e['status']}, starts {e['start_date']}" for e in relevant)
-            gaps.append(Gap("subject", None, "ask", question=f"'{m}' matches several people: {opts}. Which one (id)?"))
-        else:
-            states = ", ".join(f"{c['full_name']} is {c['status']}" for c in cands)
-            gaps.append(Gap("subject", None, "ask", question=f"{states} in PeopleHub, so there's nothing to {proc['task_type']} "
-                                                             f"(this task needs status {'/'.join(statuses)}). Did you mean someone else?"))
-    if not resolved and not gaps:
-        gaps.append(Gap("subject", None, "ask", question="Who is this for? I couldn't match a name in the request to anyone in PeopleHub."))
-    return resolved, gaps
+def requester_refused(ctx, requester: str) -> str | None:
+    """Only active employees at a company address may ask at all. -> reason if not."""
+    rules = policy.policy().get("requesters", {})
+    if not policy.trusted_sender(requester):
+        return f"{requester} is not a company address; requests are only accepted from {', '.join(rules.get('internal_domains', []))}."
+    me = _requester(ctx, requester)
+    if not me or me["status"] != "active":
+        return f"{requester} is not an active employee in PeopleHub."
+    return None
 
 
 def authorize(ctx, proc: dict, requester: str, subject: dict | None) -> str | None:
     """Requester must be an active internal employee with authority for this task. -> reason if denied."""
     rules = policy.policy().get("requesters", {})
-    if not policy.trusted_sender(requester):
-        return f"{requester} is not a company address; requests are only accepted from {', '.join(rules.get('internal_domains', []))}."
-    hr = registry.get("hr")
-    me = next((e for e in hr.search(ctx, q=requester) if (e.get("work_email") or "").lower() == requester.lower()), None)
-    if not me or me["status"] != "active":
-        return f"{requester} is not an active employee in PeopleHub."
+    refused = requester_refused(ctx, requester)
+    if refused:
+        return refused
+    me = _requester(ctx, requester)
     auth = rules.get("authority", {})
     allowed = auth.get(proc["task_type"], auth.get("default", []))
     for rule in allowed:
@@ -166,21 +75,17 @@ def authorize(ctx, proc: dict, requester: str, subject: dict | None) -> str | No
             return None
         if rule.startswith("team:") and me.get("team") == rule[5:]:
             return None
-        if rule.startswith("title:") and re.fullmatch(rule[6:].replace("*", ".*"), me.get("title") or "", re.I):
+        if rule.startswith("title:") and fnmatch.fnmatchcase((me.get("title") or "").casefold(), rule[6:].casefold()):
             return None
     return f"{me['full_name']} ({me['title']}, {me['team']}) isn't authorised to request {proc['task_type']}" + \
         (f" for {subject['full_name']}" if subject else "") + f" (allowed: {', '.join(allowed)})."
 
 
 def username_from_name(full: str) -> str:
-    return re.sub(r"[^a-z.]", "", full.lower().replace(" ", "."))
+    return "".join(c for c in full.casefold().replace(" ", ".") if c in string.ascii_lowercase + ".")
 
 
-def resolve_date(text):  # kept for derive.date_agreement callers
-    return dates.resolve(text or "", now().astimezone().date())[0]
-
-
-# ------------------------------------------------------------------ templating
+# ------------------------------------------------------------------ templating (our own YAML templates)
 class Scope(dict):
     def get_path(self, path):
         cur = self
@@ -195,80 +100,86 @@ def render(obj, scope: Scope):
     if isinstance(obj, list):
         return [render(v, scope) for v in obj]
     if isinstance(obj, str):
-        m = re.fullmatch(r"\{([\w.]+)\}", obj)
-        if m:
-            v = scope.get_path(m.group(1))
+        parts = list(string.Formatter().parse(obj))
+        if len(parts) == 1 and parts[0][0] == "" and parts[0][1]:   # exactly "{name}": keep the value's type
+            v = scope.get_path(parts[0][1])
             return v if v is not None else obj
-        return re.sub(r"\{([\w.]+)\}", lambda mm: str(scope.get_path(mm.group(1)) if scope.get_path(mm.group(1)) is not None else mm.group(0)), obj)
+        out = []
+        for literal, name, _, _ in parts:
+            out.append(literal)
+            if name is not None:
+                v = scope.get_path(name)
+                out.append(str(v) if v is not None else "{" + name + "}")
+        return "".join(out)
     return obj
 
 
 # ------------------------------------------------------------------ main entry
 def understand(ctx, request: str, requester: str, answers: dict | None = None) -> GoalSpec:
-    answers = answers or {}
-    ex = extract(ctx, request)
-    if answers.get("task_type"):
-        ex["task_type"], ex["ambiguous"] = answers["task_type"], None
-    if answers.get("date"):
-        ex["date"] = answers["date"]
-    ctx.log("understand.extract", ex)
+    from rung.llm.calls import understand_request
+    if ctx.model is None:
+        raise RuntimeError(NO_MODEL)
+    answers = dict(answers or {})
     procs = procedures()
-    g = GoalSpec(request, requester, ex.get("task_type") or "unknown")
-    if ex.get("negated") and not answers.get("negation_ok"):
-        g.questions.append({"key": "negation_ok", "q": "Your message sounds like a cancellation or a 'don't'. I won't act on it as written. "
-                                                      "If you do want me to go ahead, reply 'negation_ok: yes'; otherwise tell me what should happen instead."})
+    # who may ask at all is a fact about the requester, checked before the model reads anything,
+    # so an outsider learns nothing about the company from our questions
+    refused = requester_refused(ctx, requester)
+    if refused:
+        g = GoalSpec(request, requester, "unknown")
+        g.flags.append({"kind": "unauthorized", "detail": refused})
+        g.rejected = refused
         return g
-    if ex.get("ambiguous"):
-        g.questions.append({"key": "task_type", "q": f"This could be any of: {', '.join(ex['ambiguous'])}. Which one did you mean?"})
+    u = understand_request(ctx.model, request, requester, known_tasks(procs), today_str(),
+                           [answers["clarify"]] if answers.get("clarify") else None)
+    ctx.log("understand.model", u.model_dump())
+    g = GoalSpec(request, requester, answers.get("task_type") or u.task or "unknown")
+    if answers.get("sop"):   # the requester pointed at a written procedure for this: draft from it, whatever the model guessed
+        if not _sop_flow(ctx, g, answers, requester):
+            return g
+        procs = procedures()
+        answers["task_type"] = g.task_type
+    gr = ground(ctx, registry.get("hr"), u, procs, answers)
+    g.gaps += gr.gaps
+    g.questions += gr.questions
+    g.flags += gr.flags
+    if gr.ignore:
+        g.ignored = True
         return g
-    if (not ex.get("task_type") or ex["task_type"] not in procs) and answers.get("sop"):
-        from rung import procedures as P
-        if answers.get("approve_procedure") == "yes" and answers.get("drafted") and P.approve(answers["drafted"]):
-            ctx.log("procedure.approved", {"task_type": answers["drafted"], "by": requester})
-            procs = procedures()
-            ex["task_type"] = answers["drafted"]
-            g.task_type = ex["task_type"]
-            g.flags.append({"kind": "procedure_learned", "detail": f"New procedure '{ex['task_type']}' drafted from {answers['sop']} and approved by {requester}."})
-        elif not ctx.model:
-            g.questions.append({"key": "sop", "q": "Drafting a procedure from a prose document needs a language model, and none is configured "
-                                                   "(set RUNG_MODEL). Until then this task can't be automated."})
-            return g
-        else:
-            proc, errs = P.draft_from_sop(ctx, answers["sop"])
-            if not proc:
-                g.questions.append({"key": "sop", "q": f"I couldn't turn {answers['sop']} into a valid procedure: {errs[:3]}. Is there a clearer doc?"})
-                return g
-            steps = "\n".join(f"  {i + 1}. {st['description']} -> {st['delta']}" for i, st in enumerate(proc["steps"]))
-            g.questions.append({"key": "approve_procedure", "q": f"I drafted procedure '{proc['task_type']}' from {answers['sop']}:\n{steps}\n"
-                                                                f"Approve it for future use? (approve_procedure: yes / no)", "drafted": proc["task_type"]})
-            return g
-    if not ex.get("task_type") or ex["task_type"] not in procs:
-        g.questions.append({"key": "task_type", "q": f"I don't have a procedure for this yet. Known tasks: {', '.join(procs)}. "
-                                                     "Point me to a doc describing how it's done (reply 'sop: <path on the Drive>') "
-                                                     "and I'll draft a procedure for your approval."})
+    if gr.task_type:
+        g.task_type = gr.task_type
+    if g.questions:
         return g
-    if ex.get("date_text") and not ex.get("date"):
-        g.questions.append({"key": "date", "q": f"I couldn't tell which date you meant by '{ex['date_text']}'. Which date (YYYY-MM-DD)?"})
+    proc = procs[gr.task_type]
+    if len(gr.subjects) > 1:
+        g.split = [e["id"] for e in gr.subjects]
         return g
-    proc = procs[ex["task_type"]]
-    emps = [None]
-    if proc.get("subject", {}).get("entity") == "employee":
-        emps, gaps = resolve_subjects(ctx, proc, ex, answers)
-        g.gaps += gaps
-        g.questions += [{"key": gp.field, "q": gp.question} for gp in gaps if gp.how == "ask"]
-        if g.questions:
-            return g
-        if len(emps) > 1:
-            g.split = [e["id"] for e in emps]
-            return g
-    denied = authorize(ctx, proc, requester, emps[0])
+    emp = gr.subjects[0] if gr.subjects else None
+    denied = authorize(ctx, proc, requester, emp)
     if denied:
         g.flags.append({"kind": "unauthorized", "detail": denied})
         g.rejected = denied
         return g
     g.gaps.append(Gap("requester", requester, "resolved", "authorised per policies.yaml requesters"))
-    build(ctx, g, proc, emps[0], ex, answers)
+    build(ctx, g, proc, emp, gr, answers)
     return g
+
+
+def _sop_flow(ctx, g: GoalSpec, answers: dict, requester: str) -> bool:
+    """Unknown task + a pointer to a prose SOP: draft a procedure, get it approved. -> True once approved."""
+    from rung import procedures as P
+    if answers.get("approve_procedure") == "yes" and answers.get("drafted") and P.approve(answers["drafted"]):
+        ctx.log("procedure.approved", {"task_type": answers["drafted"], "by": requester})
+        g.task_type = answers["drafted"]
+        g.flags.append({"kind": "procedure_learned", "detail": f"New procedure '{g.task_type}' drafted from {answers['sop']} and approved by {requester}."})
+        return True
+    proc, errs = P.draft_from_sop(ctx, answers["sop"])
+    if not proc:
+        g.questions.append({"key": "sop", "q": f"I couldn't turn {answers['sop']} into a valid procedure: {errs[:3]}. Is there a clearer doc?"})
+        return False
+    steps = "\n".join(f"  {i + 1}. {st['description']} -> {st['delta']}" for i, st in enumerate(proc["steps"]))
+    g.questions.append({"key": "approve_procedure", "q": f"I drafted procedure '{proc['task_type']}' from {answers['sop']}:\n{steps}\n"
+                                                        f"Approve it for future use? (approve_procedure: yes / no)", "drafted": proc["task_type"]})
+    return False
 
 
 # ------------------------------------------------------------------ plan building (generic)
@@ -289,38 +200,81 @@ def _intent_from_step(step, scope, origin="sop", extra_cites=()):
     return it
 
 
-def build(ctx, goal: GoalSpec, proc: dict, emp: dict | None, ex: dict, answers: dict):
+def variable_steps(ctx, goal: GoalSpec, proc: dict, emp: dict | None, scope: Scope, asks: list[str], fixed: list[Intent]) -> list[Intent]:
+    """Evidence -> model proposes -> code validates. Covers the procedure's variable part
+    (`propose:` in its YAML) and the requester's explicit asks."""
+    spec = proc.get("propose")
+    if not spec and not asks:
+        return []
+    if not emp:
+        for a in asks:
+            goal.flags.append({"kind": "refused_request", "detail": f"You asked for '{a}': not done. {proc['task_type']} has no per-person steps "
+                                                                    "to attach it to; please send it as its own request."})
+        return []
+    from rung.llm.calls import propose_steps
+    spec = spec or {"about": "Only the requester's explicit asks; nothing else.", "evidence": []}
+    username = scope.get("username") or emp.get("chat_username")
+    subject = {"id": emp["id"], "full_name": emp["full_name"], "title": emp.get("title"), "team": emp.get("team"), "username": username}
+    evidence = precedent.gather(ctx, emp, spec, asks)
+    for e in evidence:   # code's own flag, from the structured trust flag, whatever the model makes of it
+        if not e["trusted"]:
+            goal.flags.append({"kind": "suspicious_instruction", "source": e["id"],
+                               "detail": f"{e['kind']} {e['id']} from {e.get('sender', '?')} is outside the company's trusted domains: "
+                                         f"shown to the planner as evidence, but it can't justify any step ({e.get('subject', '')!r})."})
+    steps = propose_steps(ctx.model, goal.task_type, spec["about"], subject, proposals.vocabulary(),
+                          [f"{i.description}: {i.delta.describe()}" for i in fixed], evidence, asks, int(spec.get("min_steps", 0)))
+    ctx.log("proposals.model", {"steps": [s.model_dump() for s in steps]})
+    needs_channels = any("channel" in (s.delta.get("key") or {}) for s in steps) or store.corrections(goal.task_type)
+    channels = set(registry.get("chat").channels(ctx)) if needs_channels else set()
+    intents, flags = proposals.validate(steps, evidence, subject, goal.task_type, channels, [i.delta for i in fixed],
+                                        allowed=set(spec.get("entities", [])))
+    proposals.apply_corrections(intents, flags, goal.task_type, emp, username, channels)
+    goal.flags += flags
+    ctx.log("proposals.validated", {"planned": [i.delta.describe() for i in intents], "flags": flags})
+    goal.gaps.append(Gap("proposed_steps", [i.description for i in intents] or "none", "resolved",
+                         f"model proposal from {len(evidence)} evidence items ({', '.join(e['id'] for e in evidence)}); "
+                         f"validated in code, {len(flags)} flagged"))
+    if asks:   # every ask is accounted for in the report, whatever the model made of it
+        planned = [i.description for i in intents if i.origin == "request"]
+        goal.flags.append({"kind": "request_asks", "detail": f"You asked: {'; '.join(asks)}. Planned from your asks: "
+                                                             f"{', '.join(planned) or 'nothing'} (refusals, if any, are listed above)."})
+    return intents
+
+
+def build(ctx, goal: GoalSpec, proc: dict, emp: dict | None, gr: Grounded, answers: dict):
     """Generic plan builder. Procedures compose library checks and derivations
     (rung/derive.py) in YAML; adding a task type needs no code."""
     goal.subject = emp or {}
     scope = Scope(employee=emp or {}, drive=str(DRIVE), requester=goal.requester, request=goal.request,
-                  date=ex.get("date"), date_text=ex.get("date_text"), _cites=[], _precedent_items=[])
+                  date=gr.date, date_text=gr.date_text)
     for chk in proc.get("checks", []):
         derive.CHECKS[chk](ctx, goal, proc, scope, answers)
     if goal.questions:
         return
     for d in proc.get("derive", []):
         scope[d["name"]] = derive.FNS[d["fn"]](ctx, goal, scope, **render(d.get("args", {}), scope))
+    after = (proc.get("propose") or {}).get("after")
+    fixed, insert_at = [], None
     for step in proc["steps"]:
         if step.get("if") and not _truthy(step["if"], scope):
-            continue
-        if "foreach" in step:
+            pass
+        elif "foreach" in step:
             items = render(step["foreach"], scope)
             for item in items if isinstance(items, list) else []:
-                s2 = Scope(scope, item=item)
-                cites = [c for c in scope["_cites"] if c.ref == f"#{item}"]
-                origin = "precedent" if item in scope["_precedent_items"] else "sop"
-                goal.intents.append(_intent_from_step(step, s2, origin, cites))
+                fixed.append(_intent_from_step(step, Scope(scope, item=item)))
         else:
-            goal.intents.append(_intent_from_step(step, scope))
+            fixed.append(_intent_from_step(step, scope))
+        if step.get("id") == after:
+            insert_at = len(fixed)
+    extra = variable_steps(ctx, goal, proc, emp, scope, gr.asks, fixed)
+    insert_at = len(fixed) if insert_at is None else insert_at
+    goal.intents = fixed[:insert_at] + extra + fixed[insert_at:]
     # written policy filters everything, whatever its origin
     for it in goal.intents:
         for v in policy.violations(it, emp):
             it.status = "blocked"
             it.result["blocked"] = v
-            src = next((c.quote for c in it.citations if c.source.startswith("precedent")), "")
-            goal.flags.append({"kind": "policy_conflict",
-                               "detail": f"Precedent suggests '{it.description}' ({src}) but {v['reason']} Skipped."})
+            goal.flags.append({"kind": "policy_conflict", "detail": f"'{it.description}' is planned but {v['reason']} Skipped."})
         if it.origin == "precedent" and it.status != "blocked":
             key = f"{goal.task_type}:{(emp or {}).get('title')}:{it.delta.signature()}:{it.delta.key.get('channel')}"
             it.needs_confirmation = store.get_confirmation(key) != "yes"

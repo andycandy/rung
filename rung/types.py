@@ -102,6 +102,7 @@ class GoalSpec:
     questions: list = field(default_factory=list)
     split: list = field(default_factory=list)        # several people named -> one child run each
     rejected: str = ""                               # authorization failure (nothing is done)
+    ignored: bool = False                            # the model read it as not a request: nothing to do
 
     def to_json(self):
         return json.dumps(asdict(self), default=str)

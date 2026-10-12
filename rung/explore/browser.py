@@ -48,6 +48,7 @@ class AppBrowser:
     def __init__(self, ctx, base_url: str, shots: Path):
         self.ctx, self.base, self.shots = ctx, base_url.rstrip("/"), shots
         self.page = ctx.new_page()
+        self.page.set_default_timeout(10000)   # a missing element should cost seconds, not half a minute
         self.probe_page = None
         self.recorders: dict = {}          # page -> (tag, list) ; probes record separately from exploration
         ctx.route("**/api/**", self._route)

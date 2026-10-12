@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from rung.syntax import email_domain
 from rung.types import RISKS, Intent
 
 POLICY_FILE = Path(__file__).resolve().parent.parent / "memory" / "policies.yaml"
@@ -69,4 +70,5 @@ def gate(intent: Intent) -> str:
 
 
 def trusted_sender(addr: str) -> bool:
-    return addr.split("@")[-1].strip(">").lower() in policy()["trusted_mail_domains"]
+    """By e-mail syntax only: the sender's domain is one of the company's."""
+    return email_domain(addr) in {d.casefold() for d in policy()["trusted_mail_domains"]}

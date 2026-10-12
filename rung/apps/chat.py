@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import secrets
 import time
+import urllib.parse
 
 from rung import store
 from rung.apps.base import App
 from rung.ctx import vault
 from rung.discover import discover_http
-from rung.explore.explorer import HeuristicExplorer, LLMExplorer
+from rung.explore.explorer import explore_with_model
 from rung.http import AuthExpired, CookieHTTP, EndpointGone
 from rung.types import Delta, ExecResult
 from sandbox.common import DOMAIN, url
@@ -124,31 +125,31 @@ class ChatApp(App):
         return v
 
     def explore(self, ctx, delta: Delta, args: dict) -> ExecResult:
+        return explore_with_model(ctx, self, delta, self.values(delta, args), shot_prefix=delta.entity)
+
+    # ---------------------------------------------------------------- workspace reads (evidence + validation)
+    def channels(self, ctx) -> list[str]:
+        """Channel names as Chatter lists them, read from the link paths (/c/<name>) on the home page."""
         ab = self.ab(ctx)
-        explorer = LLMExplorer(ctx.model) if ctx.model else HeuristicExplorer()
-        tag = f"explore-{secrets.token_hex(3)}"
-        ab.start_recording(tag)
-        t0 = time.time()
-        check = lambda: self.holds(ctx, delta)[0]  # noqa: E731 -- independent goal check after every action
-        vals = self.values(delta, args)
-        try:
-            tr = explorer.run(ab, delta, vals, check=check, start=self.HOME)
-        except Exception as ex:  # noqa: BLE001 -- model unavailable/invalid: fall back to the offline policy
-            ctx.log("llm.error", {"call": "explore_step", "error": str(ex)})
-            explorer = HeuristicExplorer()
-            tr = explorer.run(ab, delta, vals, check=check, start=self.HOME)
-        if tr.gave_up and isinstance(explorer, LLMExplorer):
-            ctx.log("explore.fallback", {"from": explorer.name, "reason": tr.gave_up})
-            ctx.stats["llm_calls"] += tr.llm_calls
-            explorer = HeuristicExplorer()
-            tr = explorer.run(ab, delta, vals, check=check, start=self.HOME)
-        rec = ab.stop_recording()
-        shot = ab.screenshot(f"{delta.entity}-{tag}")
-        ctx.stats["explore_steps"] += 1
-        ctx.stats["llm_calls"] += tr.llm_calls
-        return ExecResult(ok=not tr.gave_up, rung=explorer.name, detail=tr.gave_up or f"{len(tr.actions)} UI actions via {tr.pages}",
-                          ms=int((time.time() - t0) * 1000), llm_calls=tr.llm_calls, recording=rec,
-                          data={"actions": tr.actions, "pages": tr.pages, "screenshot": shot})
+        pg = ab.get_probe_page()
+        pg.goto(ab.base + "/", wait_until="load")
+        if "/login" in pg.url:
+            self.login(ctx, ab)
+            return self.channels(ctx)
+        hrefs = pg.evaluate("() => [...document.querySelectorAll('a[href]')].map(a => a.getAttribute('href'))")
+        return sorted({urllib.parse.unquote(h[3:]) for h in hrefs if h.startswith("/c/") and len(h) > 3})
+
+    def recent_messages(self, ctx, per_channel: int = 10) -> list[dict]:
+        """The latest messages of every channel, as posted (author, date, text)."""
+        ab = self.ab(ctx)
+        pg = ab.get_probe_page()
+        out = []
+        for name in self.channels(ctx):
+            pg.goto(ab.base + "/c/" + urllib.parse.quote(name), wait_until="load")
+            msgs = pg.evaluate("() => [...document.querySelectorAll('article')].map(a => ({author: (a.querySelector('b')||{}).innerText||'',"
+                               " date: (a.querySelector('time')||{}).innerText||'', text: (a.querySelector('p')||{}).innerText||''}))")
+            out += [{"channel": name, **m} for m in msgs[-per_channel:]]
+        return out
 
     # ---------------------------------------------------------------- lifecycle helpers
     def inverse(self, delta, before):
@@ -163,7 +164,7 @@ class ChatApp(App):
 
     def test_args(self, ctx, delta: Delta, values: dict):
         if delta.entity == "user" and delta.expect.get("exists") is True:
-            h = secrets.token_hex(3)
+            h = next(n for n in range(1, 10_000) if self.probe_user(ctx, f"zz-test-{n}") is None)  # deterministic: replays match
             v = {"username": f"zz-test-{h}", "display_name": f"ZZ Test {h}", "email": f"zz-test-{h}@{DOMAIN}", "title": "Sandbox test"}
             return Delta(self.name, "user", {"username": v["username"]},
                          {"exists": True, "display_name": v["display_name"], "email": v["email"], "title": v["title"]}), v

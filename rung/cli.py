@@ -61,6 +61,9 @@ def main(argv=None):
     co.add_argument("--remove-channel", action="append", default=[])
     a = ap.parse_args(argv)
     model = model_from_env()
+    if model is None and a.cmd in ("run", "inbox", "tick", "resume"):
+        from rung.understand import NO_MODEL
+        sys.exit(NO_MODEL)   # there is no offline understanding: reading requests and operating UIs needs a model
 
     if a.cmd == "run":
         answers = dict(x.split("=", 1) for x in a.answer)

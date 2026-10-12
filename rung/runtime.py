@@ -1,6 +1,7 @@
 """Run model: understand -> ask (batched) -> confirm -> execute as a saga -> verify -> report.
 
 States: planned -> running -> (waiting_input | scheduled) -> running -> done | partial | compensated | escalated
+        (also: ignored -- not a request; rejected -- unauthorised; split -- one child run per person)
   * checkpoint after every verified intent; a crashed run resumes where it stopped
     (precondition probes make re-execution idempotent)
   * a failed *required* intent triggers compensation of completed reversible
@@ -11,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from dataclasses import asdict
 from datetime import datetime
@@ -19,8 +19,10 @@ from datetime import datetime
 from rung import ladder, policy, report, store
 from rung.apps import registry
 from rung.ctx import Ctx
+from rung.dates import is_iso_date
+from rung.syntax import choice, is_snake
 from rung.types import Gap, GoalSpec, Intent
-from rung.understand import understand
+from rung.understand import NO_MODEL, understand
 from sandbox.common import now
 
 MAX_ASK_ROUNDS = 3
@@ -48,16 +50,25 @@ def _ask(ctx, kind, question, options=None):
     return ans
 
 
+def _drive_doc(v) -> bool:
+    s = str(v).strip()
+    return s.endswith((".md", ".txt")) and ".." not in s and all(c.isalnum() or c in "._/-" for c in s)
+
+
+# Answers are typed by their question: ids, ISO dates, closed-set choices, identifiers, Drive paths.
 VALID = {
     "subject": lambda v: str(v).strip().lstrip("#[").rstrip("]").isdigit(),
-    "start_date": lambda v: bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(v).strip())),
-    "date": lambda v: bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(v).strip())),
-    "rehire": lambda v: str(v).strip().lower() in ("reactivate", "new"),
-    "negation_ok": lambda v: str(v).strip().lower() in ("yes", "no"),
-    "approve_procedure": lambda v: str(v).strip().lower() in ("yes", "no"),
-    "sop": lambda v: bool(re.fullmatch(r"[\w./-]+\.(md|txt)", str(v).strip())),
-    "drafted": lambda v: bool(re.fullmatch(r"[a-z][a-z0-9_]*", str(v).strip())),
+    "start_date": lambda v: is_iso_date(str(v).strip()),
+    "date": lambda v: is_iso_date(str(v).strip()),
+    "rehire": lambda v: choice(v, ("reactivate", "new")) is not None,
+    "intent_ok": lambda v: choice(v, ("yes", "no")) is not None,
+    "approve_procedure": lambda v: choice(v, ("yes", "no")) is not None,
+    "task_type": lambda v: is_snake(str(v).strip()),
+    "sop": _drive_doc,
+    "drafted": lambda v: is_snake(str(v).strip()),
+    "clarify": lambda v: bool(str(v).strip()),   # free text: goes back to the model, never parsed by code
 }
+CHOICES = ("rehire", "intent_ok", "approve_procedure")
 
 
 def validate_answers(answers: dict) -> tuple[dict, list[str]]:
@@ -67,15 +78,19 @@ def validate_answers(answers: dict) -> tuple[dict, list[str]]:
         chk = VALID.get(k)
         if chk is None or chk(v):
             good[k] = str(v).strip() if isinstance(v, str) else v
+            if k in CHOICES:
+                good[k] = choice(v, ("reactivate", "new", "yes", "no"))
         else:
             bad.append(f"{k}={v!r}")
-    if good.get("negation_ok") == "no":
-        good.pop("negation_ok")
+    if good.get("intent_ok") == "no":
+        good.pop("intent_ok")
     return good, bad
 
 
 def start(request: str, requester: str, approver=None, model=None, answers: dict | None = None,
           channel: str = "cli", parent: str | None = None) -> str:
+    if model is None:
+        raise RuntimeError(NO_MODEL)
     rid = store.new_run(request, requester)
     ctx = Ctx(rid, model=model, approver=approver)
     if parent:
@@ -104,7 +119,8 @@ def start(request: str, requester: str, approver=None, model=None, answers: dict
                     break
         except Exception as ex:  # noqa: BLE001 -- a system of record is down etc.: fail closed, explain
             goal = GoalSpec(request, requester, "unknown")
-            goal.flags.append({"kind": "escalation", "detail": f"Couldn't understand the request because a system failed: {type(ex).__name__}: {ex}"})
+            goal.flags.append({"kind": "escalation", "detail": f"Couldn't understand the request (a system or the model failed; "
+                                                               f"there is no fallback parser): {type(ex).__name__}: {ex}"})
             save_goal(rid, goal)
             store.set_run(rid, state="escalated")
             store.set_run(rid, report=report.write(rid, goal, ctx))
@@ -114,6 +130,12 @@ def start(request: str, requester: str, approver=None, model=None, answers: dict
                                     "flags": goal.flags, "questions": goal.questions, "split": goal.split,
                                     "intents": [{"d": i.description, "delta": i.delta.describe(), "risk": i.risk, "origin": i.origin,
                                                  "status": i.status, "not_before": i.not_before} for i in goal.intents]})
+        if goal.ignored:
+            goal.flags.append({"kind": "not_a_request", "detail": "This message doesn't ask me to do anything, so I did nothing."})
+            save_goal(rid, goal)
+            store.set_run(rid, state="ignored")
+            store.set_run(rid, report=report.write(rid, goal, ctx))
+            return rid
         if goal.rejected:
             store.set_run(rid, state="rejected")
             store.set_run(rid, report=report.write(rid, goal, ctx))

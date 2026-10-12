@@ -8,13 +8,13 @@ approves -> it is saved to memory/procedures/ and used from then on.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
 
 from rung import derive
 from rung.apps import registry
+from rung.syntax import is_snake, placeholders
 
 PROC_DIR = Path(__file__).resolve().parent.parent / "memory" / "procedures"
 DRAFTS = PROC_DIR / "drafts"
@@ -27,15 +27,28 @@ def _entity_spec(app: str, entity: str):
     return spec
 
 
+def _strings(x):
+    if isinstance(x, dict):
+        for v in x.values():
+            yield from _strings(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _strings(v)
+    elif isinstance(x, str):
+        yield x
+
+
 def validate(proc: dict) -> list[str]:
     errs = []
-    for k in ("task_type", "match", "steps"):
+    for k in ("task_type", "description", "steps"):
         if k not in proc:
             errs.append(f"missing '{k}'")
     if errs:
         return errs
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", str(proc["task_type"])):
+    if not is_snake(str(proc["task_type"])):
         errs.append("task_type must be snake_case")
+    if "match" in proc:
+        errs.append("'match' lists are not allowed: the model picks the task from 'description'")
     for c in proc.get("checks", []):
         if c not in derive.CHECKS:
             errs.append(f"unknown check '{c}' (known: {sorted(derive.CHECKS)})")
@@ -44,6 +57,18 @@ def validate(proc: dict) -> list[str]:
         if d.get("fn") not in derive.FNS:
             errs.append(f"unknown derivation '{d.get('fn')}' (known: {sorted(derive.FNS)})")
         names.add(d.get("name"))
+    prop = proc.get("propose")
+    if prop is not None:
+        from rung.precedent import SOURCES
+        if not isinstance(prop, dict) or not prop.get("about"):
+            errs.append("propose: needs 'about' (what the model should propose)")
+        else:
+            errs += [f"propose: unknown evidence source '{e}' (known: {sorted(SOURCES)})" for e in prop.get("evidence", []) if e not in SOURCES]
+            from rung.proposals import SUBJECT_KEY
+            known = {f"{a}.{e}" for a, e in SUBJECT_KEY}
+            errs += [f"propose: '{x}' can't be proposed (known: {sorted(known)})" for x in prop.get("entities", []) if x not in known]
+            if prop.get("after") and prop["after"] not in [st.get("id") for st in proc["steps"]]:
+                errs.append(f"propose: 'after' names no step: {prop['after']}")
     for i, st in enumerate(proc["steps"]):
         where = f"step {i + 1} ({st.get('id', '?')})"
         dl = st.get("delta") or {}
@@ -65,10 +90,15 @@ def validate(proc: dict) -> list[str]:
             errs.append(f"{where}: key must be exactly {spec.get('key')} for {dl['app']}/{dl['entity']}")
         if not st.get("description"):
             errs.append(f"{where}: needs a description")
-        blob = yaml.safe_dump(st)
-        for ph in re.findall(r"\{([\w]+)[.}]", blob):
-            if ph not in names:
-                errs.append(f"{where}: placeholder '{{{ph}}}' is never defined")
+        for text in _strings(st):
+            try:
+                found = placeholders(text)
+            except ValueError as ex:
+                errs.append(f"{where}: malformed template {text[:40]!r}: {ex}")
+                continue
+            for ph in found:
+                if ph.split(".")[0] not in names:
+                    errs.append(f"{where}: placeholder '{{{ph}}}' is never defined")
     return errs
 
 
@@ -84,7 +114,6 @@ def draft_from_sop(ctx, sop_path: str) -> tuple[dict | None, list[str]]:
              "example": yaml.safe_load((PROC_DIR / "offboarding.yaml").read_text())}
     errs: list[str] = []
     for attempt in range(3):   # validation errors are fed back to the model
-        ctx.stats["llm_calls"] += 1
         proc = draft_procedure(ctx.model, p.read_text(), vocab, errs)
         errs = validate(proc)
         ctx.log("procedure.draft", {"sop": sop_path, "attempt": attempt + 1, "errors": errs})

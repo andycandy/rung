@@ -1,117 +1,78 @@
-"""Precedent mining: learn "how this is done here" from what humans did before.
+"""Evidence for "how this is done here", gathered deterministically from structured sources.
 
-Sources (all treated as untrusted *data*): how peers are set up (HR + chat),
-chat announcements, mail threads, Drive documents. Output: candidate facts and
-candidate steps with citations. Trust order is enforced by the caller:
-written policy > human precedent > the agent's own runs.
+Code never reads the evidence for meaning: it collects it, tags each item with an id and a
+trust flag (from structured facts such as the sender's domain), and hands it to the model,
+which proposes steps (rung.llm.calls.propose_steps). rung.proposals then validates every
+proposal against the apps, written policy and these trust flags.
 """
 from __future__ import annotations
 
-import math
-import re
-
+from rung import policy
 from rung.apps import registry
-from rung.types import Citation
+from rung.syntax import confirm_code
 
-CHANNEL_RE = re.compile(r"#([a-z0-9][a-z0-9-]+)")
+MAIL_LIMIT = 15        # most recent messages to ops@
+CHAT_PER_CHANNEL = 10  # most recent messages per channel
 
 
-def peer_channels(ctx, employee: dict) -> tuple[list[str], list[Citation], dict]:
-    """Channels used by a majority of active peers with the same title and team."""
+def peers(ctx, employee: dict) -> list[dict]:
+    """How active colleagues with the same title and team are set up in chat (one item per peer)."""
     hr, chat = registry.get("hr"), registry.get("chat")
-    peers = [p for p in hr.search(ctx, title=employee["title"], team=employee["team"], status="active") if p["id"] != employee["id"]]
-    counts: dict[str, list[str]] = {}
-    seen = 0
-    for p in peers:
-        if not p.get("chat_username"):
+    out = []
+    for p in hr.search(ctx, title=employee["title"], team=employee["team"], status="active"):
+        if p["id"] == employee["id"] or not p.get("chat_username"):
             continue
         u = chat.probe_user(ctx, p["chat_username"])
         if not u or not u.get("active"):
             continue
-        seen += 1
-        for c in u.get("channels", []):
-            counts.setdefault(c, []).append(p["full_name"])
-    need = math.ceil(seen / 2) if seen else 1
-    chosen = sorted(c for c, who in counts.items() if len(who) >= need)
-    cites = [Citation("precedent:peers", f"#{c}", f"{len(counts[c])}/{seen} {employee['title']}s in {employee['team']}: {', '.join(counts[c])}")
-             for c in chosen]
-    return chosen, cites, {"peers": seen, "counts": {c: len(w) for c, w in counts.items()}}
-
-
-def chat_announcements(ctx, title: str) -> list[Citation]:
-    """Corroborating evidence from chat history (read through the UI search page)."""
-    chat = registry.get("chat")
-    ab = chat.ab(ctx)
-    ab.goto("/search?q=welcome")
-    items = ab.page.evaluate("() => [...document.querySelectorAll('li.result, main li')].map(li => li.innerText)")
-    out = []
-    for text in items:
-        if title.lower() in text.lower():
-            body = re.sub(r"^\s*#[\w-]+\s*", "", text)  # drop the label of the channel it was posted in
-            for c in set(CHANNEL_RE.findall(body.lower())):
-                out.append(Citation("precedent:chat", f"#{c}", "announcement: " + text[:200]))
+        out.append({"id": f"peer:{p['chat_username']}", "kind": "peer_setup", "trusted": True, "peer": p["full_name"],
+                    "title": p["title"], "team": p["team"], "channels": sorted(u.get("channels", []))})
     return out
 
 
-def _candidates(ctx, text: str) -> list[dict]:
-    cands = []
-    if re.search(r"\badmin", text, re.I) and re.search(r"\b(make|made|grant|granted|give|given|promote|elevate)\b", text, re.I):
-        cands.append({"kind": "role", "value": "admin"})
-    for c in CHANNEL_RE.findall(text.lower()):
-        cands.append({"kind": "channel", "value": c})
-    return cands
-
-
-def request_asks(ctx, request: str) -> dict:
-    """Specific asks inside the request itself ('...and add her to #finance'). The requester
-    is authorised, but the asks still go through policy -- and refusals are reported back."""
-    return {"id": "request", "sender": "requester", "subject": "the request", "trusted_sender": True, "from_request": True,
-            "excerpt": request[:300], "candidates": _candidates(ctx, request)}
-
-
-def model_channel(value: str, text: str) -> str | None:
-    """A channel the model extracted, or None. It must be a slug the message actually names:
-    'team channels' is a description, not a channel."""
-    name = value.strip().lstrip("#").lower()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]+", name) or name not in text.lower():
-        return None
-    return name
-
-
-def mail_instructions(ctx) -> list[dict]:
-    """Instruction-like mail to ops@ about onboarding. Extracted *candidate* steps only --
-    nothing here is executed without passing policy and confirmation."""
-    from rung import policy
-    mail = registry.get("mail")
+def mail(ctx) -> list[dict]:
+    """Recent mail to ops@, unfiltered: sender, trust flag from the sender's domain, full body."""
     out = []
-    for m in mail.search(q="onboarding", to="ops@"):
-        text = f"{m['subject']}\n{m['body']}"
-        cands = []
-        if re.search(r"\badmin", text, re.I) and re.search(r"\b(make|made|grant|granted|give|given|promote|elevate)\b", text, re.I):
-            cands.append({"kind": "role", "value": "admin"})
-        for c in CHANNEL_RE.findall(text.lower()):
-            cands.append({"kind": "channel", "value": c})
-        if ctx.model:  # the model reads the text as data and lists what it asks for; the guard decides
-            try:
-                from rung.llm.calls import extract_instructions
-                ctx.stats["llm_calls"] += 1
-                for c in extract_instructions(ctx.model, text):
-                    if c["kind"] == "channel":
-                        name = model_channel(c["value"], text)
-                        if name is None:
-                            ctx.log("llm.candidate_dropped", {"call": "extract_instructions", "candidate": c})
-                            continue
-                        c = {"kind": "channel", "value": name}
-                        if c not in cands:  # only the model saw it: derive checks it against known channels
-                            c["source"] = "model"
-                    elif c["kind"] == "role":
-                        c = {"kind": "role", "value": "admin"}
-                    else:
-                        continue
-                    if c not in cands:
-                        cands.append(c)
-            except Exception as ex:  # noqa: BLE001
-                ctx.log("llm.error", {"call": "extract_instructions", "error": str(ex)})
-        out.append({"id": m["id"], "sender": m["sender"], "subject": m["subject"], "trusted_sender": policy.trusted_sender(m["sender"]),
-                    "excerpt": m["body"][:300], "candidates": cands})
+    for m in [m for m in registry.get("mail").search(to="ops@") if not confirm_code(m["body"])][:MAIL_LIMIT]:
+        # confirmation-code replies are protocol, not knowledge (and their random codes would vary between runs)
+        out.append({"id": f"mail:{m['id']}", "kind": "mail", "trusted": policy.trusted_sender(m["sender"]), "sender": m["sender"],
+                    "date": (m.get("ts") or "")[:10], "subject": m["subject"], "body": m["body"]})
     return out
+
+
+def chat(ctx) -> list[dict]:
+    """Recent messages in every chat channel, as posted (internal workspace: trusted authors)."""
+    out = []
+    for item in registry.get("chat").recent_messages(ctx, CHAT_PER_CHANNEL):
+        out.append({"id": f"chat:{len(out) + 1}", "kind": "chat", "trusted": True, **item})
+    return out
+
+
+def sop(ctx, path: str) -> list[dict]:
+    from rung.apps.docs import drive_path
+    p = drive_path(path)
+    if not p.exists():
+        return []
+    return [{"id": f"sop:{path}", "kind": "sop", "trusted": True, "path": path, "text": p.read_text()[:4000]}]
+
+
+def request(asks: list[str]) -> dict:
+    """The requester's explicit asks. The requester is authorised, but the asks still go through validation."""
+    return {"id": "request", "kind": "request", "trusted": True, "asks": list(asks)}
+
+
+SOURCES = {"peers": lambda ctx, emp, spec: peers(ctx, emp), "mail": lambda ctx, emp, spec: mail(ctx),
+           "chat": lambda ctx, emp, spec: chat(ctx), "sop": lambda ctx, emp, spec: sop(ctx, spec["sop"]) if spec.get("sop") else []}
+
+
+def gather(ctx, employee: dict, spec: dict, asks: list[str]) -> list[dict]:
+    """Evidence named by the procedure's `propose.evidence`, plus the request's own asks."""
+    ev = []
+    for name in spec.get("evidence", []):
+        try:
+            ev += SOURCES[name](ctx, employee, spec)
+        except Exception as ex:  # noqa: BLE001 -- a source being down means less evidence, never a guess
+            ctx.log("evidence.error", {"source": name, "error": f"{type(ex).__name__}: {ex}"})
+    ev.append(request(asks))
+    ctx.log("evidence.gathered", {"items": [{"id": e["id"], "trusted": e["trusted"]} for e in ev]})
+    return ev

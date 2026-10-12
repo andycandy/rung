@@ -8,6 +8,7 @@ Mail is not authenticated (SMTP From can be spoofed), so:
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 
 import httpx
@@ -57,6 +58,10 @@ def process(model=None) -> list[str]:
         if m.get("in_reply_to") in threads:
             prev = store.get_run(threads[m["in_reply_to"]])
             answers, request = _thread_answers(m["body"]), prev["request"]
+            if prev.get("goal"):   # an approval in the thread refers to the draft we proposed in it
+                drafted = next((q["drafted"] for q in json.loads(prev["goal"]).get("questions", []) if q.get("drafted")), None)
+                if drafted:
+                    answers.setdefault("drafted", drafted)
         approver = (lambda kind, q, o: "yes" if kind == "confirm" else None)
         rid = runtime.start(request, sender, approver, model, answers, channel="email")
         run = store.get_run(rid)

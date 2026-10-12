@@ -242,6 +242,10 @@ def seed(rng_seed: int | None = None):
         "Anyone already working here can get read access to the BI dashboards.\n"
         "Add them to the #dashboards channel in Chatter (that's where access requests and links live), "
         "then email them at their work address to confirm, subject 'Dashboard access granted'.\n")
+    (DRIVE / "handbook" / "expense-policy.md").write_text(   # unrelated to any task: a distractor for how-to search
+        "# Expense policy (Finance)\n\n"
+        "Submit receipts within 30 days through the finance portal. Meals over INR 2,000 per person need a manager's "
+        "approval. Travel is booked through the travel desk; economy class for flights under six hours.\n")
     for t in ("welcome_pack.fodt", "report.fodt"):
         shutil.copy(ROOT / "sandbox" / "templates" / t, DRIVE / "templates" / t)
 

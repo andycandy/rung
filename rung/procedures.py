@@ -103,25 +103,40 @@ def validate(proc: dict) -> list[str]:
 
 
 def draft_from_sop(ctx, sop_path: str) -> tuple[dict | None, list[str]]:
+    """Draft from one Drive document the requester pointed at (`sop: <path>`)."""
     from rung.apps.docs import drive_path
-    from rung.llm.calls import draft_procedure
     p = drive_path(sop_path)
     if not p.exists():
         return None, [f"no such document on the Drive: {sop_path}"]
+    return draft_from_sources(ctx, [{"id": f"doc:{sop_path}", "label": sop_path, "text": p.read_text()}])
+
+
+def draft_from_sources(ctx, sources: list[dict]) -> tuple[dict | None, list[str]]:
+    """Draft a procedure from one or more source texts ({id, label, text}): documents and/or mails.
+    The validator and its error feedback are the same whatever the sources; the draft is saved under
+    drafts/ only, and becomes a procedure only when a human approves it."""
+    from rung.llm.calls import draft_procedure
     vocab = {"apps": {n: {e: {"key": s.get("key"), "fields": s.get("compare")} for e, s in registry.get(n).projection.items()}
                       for n in registry.names()},
              "checks": sorted(derive.CHECKS), "derivations": sorted(derive.FNS),
              "example": yaml.safe_load((PROC_DIR / "offboarding.yaml").read_text())}
+    text = "\n\n".join(f"### Source {s['label']}\n{s['text']}" for s in sources)
     errs: list[str] = []
     for attempt in range(3):   # validation errors are fed back to the model
-        proc = draft_procedure(ctx.model, p.read_text(), vocab, errs)
+        proc = draft_procedure(ctx.model, text, vocab, errs)
         errs = validate(proc)
-        ctx.log("procedure.draft", {"sop": sop_path, "attempt": attempt + 1, "errors": errs})
+        ctx.log("procedure.draft", {"sources": [s["id"] for s in sources], "attempt": attempt + 1, "errors": errs})
         if not errs:
-            DRAFTS.mkdir(parents=True, exist_ok=True)
-            (DRAFTS / f"{proc['task_type']}.yaml").write_text(yaml.safe_dump(proc, sort_keys=False))
+            save_draft(proc)
             return proc, []
     return None, errs
+
+
+def save_draft(proc: dict) -> Path:
+    DRAFTS.mkdir(parents=True, exist_ok=True)
+    p = DRAFTS / f"{proc['task_type']}.yaml"
+    p.write_text(yaml.safe_dump(proc, sort_keys=False))
+    return p
 
 
 def approve(task_type: str) -> bool:

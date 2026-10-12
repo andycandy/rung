@@ -56,6 +56,34 @@ def sop(ctx, path: str) -> list[dict]:
     return [{"id": f"sop:{path}", "kind": "sop", "trusted": True, "path": path, "text": p.read_text()[:4000]}]
 
 
+HOWTO_FOLDERS = ("handbook", "templates")
+HOWTO_MAIL_LIMIT = 30
+HOWTO_EXCERPT = 1500
+
+
+def gather_howto_sources(ctx) -> list[dict]:
+    """Everything that might say how to do an unknown task, unfiltered: every Drive document under
+    handbook/ and templates/ (path, size, start of the text) and the last mails to ops@ (sender,
+    domain-trust flag, subject, start of the body). The model judges relevance; code only reads the
+    structured trust flag."""
+    from rung.apps.docs import drive_path
+    out = []
+    for folder in HOWTO_FOLDERS:
+        root = drive_path(folder)
+        for p in sorted(root.rglob("*")) if root.exists() else []:
+            if not p.is_file():
+                continue
+            rel = p.relative_to(drive_path("")).as_posix()
+            out.append({"id": f"doc:{rel}", "kind": "doc", "trusted": True, "path": rel, "size": p.stat().st_size,
+                        "text": p.read_text(errors="replace")[:HOWTO_EXCERPT]})
+    mails = [m for m in registry.get("mail").search(to="ops@") if not confirm_code(m["body"])][:HOWTO_MAIL_LIMIT]
+    for m in mails:
+        out.append({"id": f"mail:{m['id']}", "kind": "mail", "trusted": policy.trusted_sender(m["sender"]), "sender": m["sender"],
+                    "subject": m["subject"], "text": m["body"][:HOWTO_EXCERPT]})
+    ctx.log("howto.sources", {"items": [{"id": s["id"], "trusted": s["trusted"]} for s in out]})
+    return out
+
+
 def request(asks: list[str]) -> dict:
     """The requester's explicit asks. The requester is authorised, but the asks still go through validation."""
     return {"id": "request", "kind": "request", "trusted": True, "asks": list(asks)}

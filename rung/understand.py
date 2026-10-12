@@ -133,11 +133,16 @@ def understand(ctx, request: str, requester: str, answers: dict | None = None) -
                            [answers["clarify"]] if answers.get("clarify") else None)
     ctx.log("understand.model", u.model_dump())
     g = GoalSpec(request, requester, answers.get("task_type") or u.task or "unknown")
-    if answers.get("sop"):   # the requester pointed at a written procedure for this: draft from it, whatever the model guessed
-        if not _sop_flow(ctx, g, answers, requester):
-            return g
+    if _approved(ctx, g, answers, requester):   # a drafted procedure, approved by the requester: use it
         procs = procedures()
         answers["task_type"] = g.task_type
+    elif answers.get("sop"):   # the requester pointed at a written procedure: draft from it, whatever was found or guessed
+        _sop_draft(ctx, g, answers)
+        return g
+    elif u.is_request and u.intent == "do" and (not u.task or u.task not in procs) and not answers.get("task_type"):
+        from rung import howto   # unknown task: look for a written how-to before asking for one
+        howto.find_and_draft(ctx, g, request, u, procs)
+        return g
     gr = ground(ctx, registry.get("hr"), u, procs, answers)
     g.gaps += gr.gaps
     g.questions += gr.questions
@@ -164,22 +169,30 @@ def understand(ctx, request: str, requester: str, answers: dict | None = None) -
     return g
 
 
-def _sop_flow(ctx, g: GoalSpec, answers: dict, requester: str) -> bool:
-    """Unknown task + a pointer to a prose SOP: draft a procedure, get it approved. -> True once approved."""
+def _approved(ctx, g: GoalSpec, answers: dict, requester: str) -> bool:
+    """The requester approved a draft (from a `sop:` pointer or a self-found how-to): move it from drafts/
+    to the procedures. -> True if the drafted procedure is now (or already was) approved."""
     from rung import procedures as P
-    if answers.get("approve_procedure") == "yes" and answers.get("drafted") and P.approve(answers["drafted"]):
-        ctx.log("procedure.approved", {"task_type": answers["drafted"], "by": requester})
-        g.task_type = answers["drafted"]
-        g.flags.append({"kind": "procedure_learned", "detail": f"New procedure '{g.task_type}' drafted from {answers['sop']} and approved by {requester}."})
-        return True
+    drafted = answers.get("drafted")
+    if answers.get("approve_procedure") != "yes" or not drafted:
+        return False
+    if P.approve(drafted):
+        ctx.log("procedure.approved", {"task_type": drafted, "by": requester})
+        g.flags.append({"kind": "procedure_learned", "detail": f"New procedure '{drafted}' approved by {requester} and saved for future use."})
+    elif drafted not in procedures():
+        return False
+    g.task_type = drafted
+    return True
+
+
+def _sop_draft(ctx, g: GoalSpec, answers: dict):
+    """The requester pointed at a written procedure (`sop: <path>`): draft from it and ask for approval."""
+    from rung import howto, procedures as P
     proc, errs = P.draft_from_sop(ctx, answers["sop"])
     if not proc:
         g.questions.append({"key": "sop", "q": f"I couldn't turn {answers['sop']} into a valid procedure: {errs[:3]}. Is there a clearer doc?"})
-        return False
-    steps = "\n".join(f"  {i + 1}. {st['description']} -> {st['delta']}" for i, st in enumerate(proc["steps"]))
-    g.questions.append({"key": "approve_procedure", "q": f"I drafted procedure '{proc['task_type']}' from {answers['sop']}:\n{steps}\n"
-                                                        f"Approve it for future use? (approve_procedure: yes / no)", "drafted": proc["task_type"]})
-    return False
+        return
+    g.questions.append(howto.approval_question(proc, [answers["sop"]]))
 
 
 # ------------------------------------------------------------------ plan building (generic)

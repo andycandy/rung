@@ -5,7 +5,12 @@
 > **The model understands language. Code never does.**
 > Code grounds what the model said against systems of record, runs routines already verified to work, and checks real state afterwards. The model can't approve itself, raise its own privileges, or declare a step done.
 
-**▶ [Demo video (2 min 38 s, sped up 2×)](docs/rung-demo.mp4).** One continuous real run on Nemotron. On the left is the browser Rung operates; on the right, what it reads, decides, rejects and learns, and which rung of the ladder each step uses.
+**▶ [Demo video (2 min 47 s, sped up 2×)](docs/rung-demo.mp4).** One continuous real run on Nemotron.
+- **Left:** the current request and its phase, above the browser Rung operates.
+- **Right:**
+  - the ladder: the step in progress, which rung served it, and what failed;
+  - the plan as a checklist, showing how and how fast each step was verified;
+  - the decisions, model and code marked apart, with the model's own reasoning.
 1. Cold start: Rung explores Chatter, learns its API, and the policy and the untrusted mail are enforced.
 2. Warm run: the next hire goes through the learned API in milliseconds.
 3. A task Rung has never seen: it finds `handbook/dashboards-access.md` itself, drafts a skill, and runs it once approved.
@@ -84,7 +89,7 @@ Real model: NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`.
 | **main eval**, 41 cases (tag `eval-run-1`) | **0 false successes, 38/41 passed**, 368 model calls, 29 min |
 | **replay** of that recording | reproduces it exactly: same 41 outcomes, **0 replay misses**, 6 min, no model calls |
 | **skill search**, S1–S5 (latest code) | **5/5, 0 false successes**. In S4 the model picked an untrusted "how-to" trap mail with high confidence, and **code rejected it** |
-| tests | 82 unit tests + 1 replay test pass |
+| tests | 85 pass: 83 unit tests, plus 2 against the live sandbox (a recorded run replays exactly; the SSO stylesheet changes nothing the agent reads) |
 
 The 41 cases cover:
 - **learning curve:** a cold run explores the UI and learns API tools; the warm run uses them, with no browser for chat writes;

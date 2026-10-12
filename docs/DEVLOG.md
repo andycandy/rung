@@ -276,6 +276,11 @@ The first live run of this section found a **false success in S2**:
 - The approved run parked them and reported `scheduled`.
 - The validator now rejects a fixed time in a procedure (it must be relative, such as `{employee.start_date}`, or absent), the approval question shows each step's timing, and the section was re-run.
 
+A demo take later found a second gap, which wasn't a false success:
+- The model drafted the same skill with `requires: [employee]`. "employee" isn't a PeopleHub field, but the validator didn't check `requires`.
+- The approved run therefore stopped to ask for a field that doesn't exist (`waiting_input`).
+- `requires` may now only name PeopleHub employee fields. Anything else is a validation error, fed back for a redraft.
+
 The untrusted trap mail is sent at the start of section S rather than in the base seed. Every onboarding shows the model recent ops@ mail as evidence, so seeding it for everyone would change all 41 main-eval prompts and invalidate the recorded run.
 
 ## Honest scope and limitations

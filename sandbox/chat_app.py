@@ -255,13 +255,47 @@ fetch(API+'/telemetry',{method:'POST',body:JSON.stringify({event:'pageview',path
 """
 
 
+# Presentation only: same DOM, text and element order in every UI variant (the explorer's view and
+# recorded prompts don't change), just readable for people looking at screenshots.
+CSS = """
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1d1c1d;background:#f4f4f6}
+nav,aside{display:block;background:#3f0e40;padding:12px 24px;color:#cfc3cf}
+nav a{color:#fff;font-weight:600;text-decoration:none;margin:0 6px}
+header{background:#350d36;color:#fff;padding:10px 24px;font-size:18px}
+#flash{max-width:880px;margin:12px auto 0;padding:0 24px;color:#b42318;font-weight:600}
+main{max-width:880px;margin:16px auto 40px;padding:24px 28px;background:#fff;border:1px solid #e4e4e7;border-radius:10px;
+     box-shadow:0 1px 3px rgba(0,0,0,.06)}
+h1{margin:0 0 16px;font-size:24px}
+h2{font-size:17px;margin:24px 0 8px;color:#3f0e40}
+a{color:#1264a3}
+ul{padding-left:20px}
+li{margin:4px 0}
+dl{display:grid;grid-template-columns:120px 1fr;gap:6px 16px;margin:0 0 8px}
+dt{color:#616061;font-weight:600}
+dd{margin:0}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #ececef}
+th{font-size:13px;color:#616061;letter-spacing:.03em}   /* no text-transform: innerText (what the explorer reads) honours it */
+form p,p{margin:10px 0}
+label{font-weight:600;margin-right:8px}
+input,select{font:inherit;padding:6px 10px;border:1px solid #c9c9cf;border-radius:6px;min-width:220px}
+input[type=checkbox]{min-width:0;margin-right:6px}
+button{font:inherit;font-weight:600;padding:6px 14px;border-radius:6px;border:1px solid #007a5a;background:#007a5a;color:#fff;
+       cursor:pointer;margin-left:6px}
+li button{background:#fff;color:#b42318;border-color:#e3b4b0;padding:2px 10px;font-size:13px}
+article{padding:10px 0;border-bottom:1px solid #f0f0f2}
+time{color:#868686;font-size:12px;margin-left:6px}
+"""
+
+
 def page(title, body, js=""):
     L = _L()
     nav = (f"<nav aria-label='Main'><a href='/'>{L['channels']}</a> | <a href='/people'>{L['people']}</a> | "
            f"<a href='/search'>{L['search']}</a></nav>")
     if int(flags().get("chat_ui_variant", 1)) >= 2:
         nav = f"<header><strong>Chatter</strong></header><aside>{nav}</aside>"
-    html = (f"<!doctype html><html><head><title>{title} - Chatter</title></head><body>{nav}"
+    html = (f"<!doctype html><html><head><title>{title} - Chatter</title><style>{CSS}</style></head><body>{nav}"
             f"<div id='flash'></div><main><h1>{title}</h1>{body}</main>"
             f"<script>{JS_COMMON % {'ver': _ver()}}{js}</script></body></html>")
     return html

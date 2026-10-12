@@ -62,6 +62,10 @@ Flags: untrusted mail from it-helpdesk@acme-support.test can't justify any step;
 
 The first channel add is done through the UI (20 s). Its recorded traffic becomes an API tool, which is sandbox-tested and then promoted, and the next channel adds take about 60 ms each with no browser. The cold run takes 82 s and 20 model calls; the warm run for the next hire takes 34 s and 6 calls. On Monday, `tick` sends the welcome emails and both runs end `done`.
 
+![Chatter, the sandbox's Slack-like app, showing a person's page](docs/img/chatter-person.png)
+
+*Chatter, the sandbox's Slack-like app, on the person page where Rung's explorer manages channel memberships (it learned that page from a verified change; see docs/DEVLOG.md). The styling is presentation only: the page text and elements the model reads are unchanged, and replaying recorded run A1 still matches with 0 misses.*
+
 ## Results
 
 Real model: NVIDIA NIM `nvidia/nemotron-3-super-120b-a12b`.

@@ -106,8 +106,8 @@ class LLMExplorer:
     """Model-driven exploration: one typed call per step, bounded scratchpad."""
     name = "explore:llm"
 
-    def __init__(self, model, budget: int = 12, known_paths: list[str] | None = None):
-        self.model, self.budget, self.known_paths = model, budget, known_paths or []
+    def __init__(self, model, budget: int = 12, known_paths: list[str] | None = None, on_step=None):
+        self.model, self.budget, self.known_paths, self.on_step = model, budget, known_paths or [], on_step
 
     def run(self, ab, delta: Delta, values: dict, check=None, start: str = "/") -> Trace:
         from rung.llm.calls import explore_step
@@ -123,6 +123,9 @@ class LLMExplorer:
             tr.pages.append(snap["url"])
             step = explore_step(self.model, delta, values, snap, history[-6:], self.known_paths)
             tr.llm_calls += 1
+            if self.on_step:   # the model's decision and its stated reason, for the event log
+                self.on_step({"page": snap["url"], "action": step.action, "reason": step.reason[:300],
+                              "actions": [a.model_dump(exclude_none=True) for a in step.actions][:6]})
             if step.action == "done":
                 if check is None or check():
                     tr.final = urllib.parse.urlsplit(ab.page.url).path
@@ -184,7 +187,7 @@ def explore_with_model(ctx, app, delta: Delta, values: dict, shot_prefix: str) -
     nav_key = f"{app.name}:{delta.entity}"
     entities = [delta.entity] + [e for e in app.projection if e != delta.entity]
     known = [f"{e}: {p}" for e in entities for p in fill_templates(store.get_nav_paths(f"{app.name}:{e}"), values)]
-    explorer = LLMExplorer(ctx.model, known_paths=known)
+    explorer = LLMExplorer(ctx.model, known_paths=known, on_step=lambda d: ctx.log("explore.step", {"delta": delta.describe(), **d}))
     check = lambda: app.holds(ctx, delta)[0]  # noqa: E731 -- independent goal check
     try:
         tr = explorer.run(ab, delta, values, check=check, start=app.HOME)

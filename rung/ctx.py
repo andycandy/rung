@@ -18,12 +18,18 @@ def vault() -> dict:
 class CountingModel:
     """Counts every completion made on behalf of one run, retries included."""
 
-    def __init__(self, inner, stats: dict):
-        self.inner, self.stats = inner, stats
+    def __init__(self, inner, stats: dict, log=None):
+        self.inner, self.stats, self.log = inner, stats, log
 
     def complete(self, system: str, user: str, max_tokens: int = 1500, thinking: bool | None = None) -> str:
         self.stats["llm_calls"] += 1
-        return self.inner.complete(system, user, max_tokens, thinking)
+        out = self.inner.complete(system, user, max_tokens, thinking)
+        client = self.inner if hasattr(self.inner, "last_reasoning") else getattr(self.inner, "inner", None)
+        reasoning = getattr(client, "last_reasoning", "") or ""
+        if self.log and reasoning:   # the model's own reasoning text (calls with reasoning on), for audit and the demo viewer
+            self.log("model.thinking", {"call": system[:60], "text": reasoning[:1500]})
+            client.last_reasoning = ""
+        return out
 
 
 @dataclass
@@ -36,7 +42,7 @@ class Ctx:
 
     def __post_init__(self):
         if self.model is not None and not isinstance(self.model, CountingModel):
-            self.model = CountingModel(self.model, self.stats)
+            self.model = CountingModel(self.model, self.stats, self.log)
 
     def log(self, kind: str, data: dict | None = None):
         store.event(self.rid, kind, data or {})

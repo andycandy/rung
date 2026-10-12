@@ -7,6 +7,7 @@ turns into direct API tools after a verified success.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -94,8 +95,23 @@ class AppBrowser:
         return rec[1] if rec else []
 
     # ---------------------------------------------------------------- actions
+    def frame(self):
+        """Demo only (RUNG_DEMO_FRAMES=<dir>): the latest view of the page being operated, for a live viewer."""
+        d = os.environ.get("RUNG_DEMO_FRAMES")
+        if not d:
+            return
+        try:
+            out = Path(d)
+            out.mkdir(parents=True, exist_ok=True)
+            self.page.screenshot(path=str(out / "frame.tmp.jpg"), type="jpeg", quality=80)
+            os.replace(out / "frame.tmp.jpg", out / "frame.jpg")
+            (out / "frame.json").write_text(json.dumps({"url": self.page.url, "t": time.time()}))
+        except Exception:  # noqa: BLE001 -- a demo frame must never break a run
+            pass
+
     def goto(self, path: str):
         self.page.goto(self.base + path if path.startswith("/") else path, wait_until="networkidle")
+        self.frame()
 
     def settle(self):
         try:
@@ -113,16 +129,20 @@ class AppBrowser:
     def click(self, rid):
         self.el(rid).click()
         self.settle()
+        self.frame()
 
     def fill(self, rid, value):
         self.el(rid).fill(str(value))
+        self.frame()
 
     def select(self, rid, label):
         self.el(rid).select_option(label=label)
+        self.frame()
 
     def check(self, rid, on=True):
         (self.el(rid).check if on else self.el(rid).uncheck)()
         self.settle()
+        self.frame()
 
     def screenshot(self, name: str) -> str:
         p = self.shots / f"{name}.png"

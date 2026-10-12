@@ -52,7 +52,7 @@ class OpenAICompatible:
     def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 120, thinking_toggle: bool = False):
         self.base, self.key, self.model, self.timeout = base_url.rstrip("/"), api_key, model, timeout
         self.thinking_toggle = thinking_toggle   # NIM's Nemotron chat template accepts enable_thinking
-        self.calls = 0
+        self.calls, self.last_reasoning = 0, ""
         self.limiter = RateLimiter(int(os.environ.get("RUNG_MAX_RPM", "18")))
 
     def complete(self, system: str, user: str, max_tokens: int = 1500, thinking: bool | None = None) -> str:
@@ -73,6 +73,7 @@ class OpenAICompatible:
                 r.raise_for_status()
                 self.calls += 1
                 msg = r.json()["choices"][0]["message"]
+                self.last_reasoning = msg.get("reasoning_content") or ""   # hidden reasoning, kept for the event log
                 return msg.get("content") or ""
             except (httpx.HTTPError, ModelError) as ex:
                 last = ex

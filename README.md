@@ -166,6 +166,8 @@ Also produced on this branch: `pytest -q` **83 passed**: 82 unit tests, plus the
 | model calls answered | 368 | 368, **0 replay misses** |
 | wall time | 1,734 s | 367 s |
 
+*Which code these numbers describe:* the live run and its replay were made at commit `b701ec5`. The skills feature added after it (next section) changes what C9's first request does: it now searches for a how-to before asking. Replaying `eval/model_run.jsonl` on a later commit therefore diverges at C9, until the full eval is re-recorded.
+
 All 41 cases end in the same state, with the same pass/fail and false-success result ([`eval/replay_eval.log`](eval/replay_eval.log), [`eval/results_replay.json`](eval/results_replay.json)). The first replay attempt diverged at A1's SSO step on Django's random password-salt summary. That was fixed by masking it in the replay key (see R6), after which the full replay matched.
 
 The oracle reads the apps' databases and the Drive directly, which the agent can never do. *False success* means the agent claimed done but the oracle disagrees.

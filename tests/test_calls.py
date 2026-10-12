@@ -102,3 +102,5 @@ def test_replay_key_masks_wall_clock_times_only_and_includes_reasoning_mode():
     assert a == replay_key("s", "Date joined: 2026-10-12 09:02:55 | starts 2026-10-12", False)   # wall clock masked
     assert a != replay_key("s", "Date joined: 2026-10-11 17:41:03 | starts 2026-10-19", False)   # a plain date is data
     assert a != replay_key("s", "Date joined: 2026-10-11 17:41:03 | starts 2026-10-12", True)
+    salt1 = replay_key("s", "algorithm: pbkdf2_sha256 iterations: 1500000 salt: S2LCQK**** hash: EGceUZ****", False)
+    assert salt1 == replay_key("s", "algorithm: pbkdf2_sha256 iterations: 1500000 salt: r6K45g**** hash: l5rO+3****", False)

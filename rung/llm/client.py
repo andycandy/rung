@@ -21,8 +21,9 @@ from collections import deque
 
 import httpx
 
-# a date with a time of day, or a bare time, as rendered by Django or ISO ("2026-10-11 17:41:03", "17:41:03")
-WALL_CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:\d{2})?|\b\d{2}:\d{2}:\d{2}\b")
+# a date with a time of day, or a bare time, as rendered by Django or ISO ("2026-10-11 17:41:03", "17:41:03");
+# and Django's password-hash summary ("salt: S2LCQK*** hash: EGceUZ***"), whose random salt differs every run
+WALL_CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:\d{2})?|\b\d{2}:\d{2}:\d{2}\b|salt: \S+ hash: \S+")
 
 
 class ModelError(Exception):
@@ -138,6 +139,9 @@ class Replay:
         k = replay_key(system, user, thinking)
         if not self.by_key.get(k):
             self.misses.append({"key": k, "system": system[:80], "user": user[:300]})
+            if os.environ.get("RUNG_REPLAY_MISSES"):   # full prompt, to diff against the recording
+                with open(os.environ["RUNG_REPLAY_MISSES"], "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"key": k, "thinking": thinking, "system": system, "user": user}) + "\n")
             print(f"REPLAY MISS {k}: prompt not in recording (the run diverged): {user[:160]!r}", file=sys.stderr, flush=True)
             raise ReplayMiss(f"prompt {k} not in recording (the run diverged from the recorded one)")
         self.calls += 1

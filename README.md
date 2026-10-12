@@ -60,7 +60,7 @@ Who does what:
 | how to operate an unfamiliar UI | ✔ `explore_step` | checks `app.holds()` after every action; the model's "done" means nothing |
 | whether anything is allowed, done, or trusted | ✘ | ✔ policy gate, verification, promoter, saga |
 
-## What changed in the model-first rewrite (branch `model-first`)
+## What changed in the model-first rewrite
 
 Everything that read human text with code was deleted, not kept as a fallback:
 

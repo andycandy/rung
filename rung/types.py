@@ -111,7 +111,7 @@ class GoalSpec:
 @dataclass
 class ExecResult:
     ok: bool
-    rung: str = ""            # which rung executed (learned:<id> | documented_api | script | explore:heuristic | explore:llm)
+    rung: str = ""            # which rung executed (learned:<id> | documented_api | script:<tool> | explore:llm | noop:already-satisfied)
     detail: str = ""
     ms: int = 0
     llm_calls: int = 0

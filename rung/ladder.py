@@ -6,7 +6,7 @@ Order:
   1. promoted learned rungs        -> no LLM, no browser
   2. documented API / existing tool (from discovery)
   3. probation learned rungs       -> used with verified fallback
-  4. explore the UI                -> LLM or heuristic; traffic recorded; then promoter
+  4. explore the UI                -> the model (no heuristic fallback); traffic recorded; then promoter
 The model never decides success: `app.holds()` reads real state after each attempt.
 """
 from __future__ import annotations

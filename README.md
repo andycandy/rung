@@ -105,6 +105,7 @@ Also changed:
 | R5 | Untrusted mail was flagged only if the model happened to cite it | code flags every untrusted evidence item it shows the model, from the structured trust flag |
 | R6 | Replay would diverge on wall-clock text in prompts: Django's "date joined" times, Playwright's retry logs, random confirmation codes in later mail evidence | replay keys mask date-with-time and time-of-day strings (only in the key, never in what the model reads); explorer history keeps an error's first line; confirmation-code replies aren't evidence |
 | R7 | A human correction naming a channel that doesn't exist would be planned | corrections are checked against Chatter's channel list too |
+| R8 | **Unsafe.** A step-by-step trace of a failing channel add showed the explorer's hint sending the model to the create-user form. It hit "username taken", **invented `zz-dbg2`**, created that account, and added it to the channel. The goal check correctly said "not done", but an unintended account existed. Also, a checkbox value `"false"` went through Python's `bool()` and became `True` | code guards every explorer action: it may only type values the task supplied (passwords are generated); a select must pick an option equal to a supplied value; checkbox values are parsed as tokens and may only change when the goal sets a true/false field; `goto` stays inside the app. Refusals go back to the model. Hints now record the page the browser is on once the change holds (`/people/{username}`), not the form it started from |
 
 **Layer benchmarks** (real model; each layer on its own, so a failure points at one layer):
 
@@ -114,6 +115,13 @@ Also changed:
 | proposals: 6 subjects incl. an engineer-only note, "team channels" mail, untrusted admin mail, explicit asks; correct after validation (`eval/bench_proposals.py`) | 5/6, 11.7 s (dropped the explicit "add her to #finance" ask) | **6/6**, 22.7 s |
 
 Configured accordingly: understanding and UI exploration without reasoning, proposals and SOP drafting with it (8,000-token budget).
+
+| explorer (reasoning off): 11 UI changes from cold, checked with the app's own probe (`eval/bench_explorer.py`) | result |
+|---|---|
+| before the R8 guards and hint fix | 5/11, 87 model calls, 369 s |
+| after | **9/11**, 55 model calls, 199 s |
+
+Still failing after the fix: disabling an SSO login in the Django admin, and adding a channel on Chatter's third UI variant (labels the explorer never saw). Both fail honestly (budget exhausted, nothing claimed). Eval cases that need them (C6's SSO step, B5.3) are expected to show it.
 
 With reasoning on, the model was *worse* at reading requests: it called plain statements such as "Priya Nair is leaving, her last day is October 30" unclear. The one miss with reasoning off: "Rahul's last day is a week from Friday" came back with an unclear intent and 23 Oct (expected 16 Oct). Grounding asks before acting on an unclear intent, so nothing wrong would happen, but the date reading is wrong.
 
@@ -132,7 +140,7 @@ Three regular expressions remain in `rung/`, all on structured data: `EMAIL_SYNT
 **Pending.** The full eval on NVIDIA NIM `nemotron-3-super-120b-a12b` with this code has not finished yet; this section will report, in this order: false successes, pass rate, model calls, wall time, and then whether a replay of the recording reproduces the same results. No earlier numbers are carried over: they came from the previous architecture (regex understanding, heuristic explorer) and don't describe this code. Those runs' logs are kept, for history only, in `eval/archive_iteration3/`.
 
 Produced on this branch so far:
-- `pytest -q`: **74 passed**, 1 skipped (the replay test, which needs a recording from the eval run).
+- `pytest -q`: **75 passed**, 1 skipped (the replay test, which needs a recording from the eval run).
 
 The oracle reads the apps' databases and the Drive directly, which the agent can never do. *False success* means the agent claimed done but the oracle disagrees.
 

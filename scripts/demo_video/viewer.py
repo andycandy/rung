@@ -1,8 +1,8 @@
 """Live demo viewer: the browser Rung is operating (left) and its thinking (right, fixed).
 
 Reads only what Rung already writes: the latest browser frame (RUNG_DEMO_FRAMES) and the
-append-only event log in var/agent.db, which it turns into readable lines. It never talks to
-the agent, so the run is exactly the same with or without it.
+append-only event log in var/agent.db, which it turns into typed items for the page. It never
+talks to the agent, so the run is exactly the same with or without it.
 
   python scripts/demo_video/viewer.py      # http://127.0.0.1:7190/
 """
@@ -23,8 +23,10 @@ FRAMES = Path(os.environ.get("RUNG_DEMO_FRAMES", VAR / "demo"))
 app = Flask(__name__)
 PORT = 7190
 
-RUNG_LABEL = {"noop": "already true", "learned": "learned API tool", "documented": "documented API / CLI",
-              "probation": "tool on probation", "ui": "UI exploration (model)"}
+# which model call a reasoning trace belongs to, by the opening of its system prompt (labels only)
+THINKING = [("You read one message", "reading the request"), ("You plan the variable part", "planning steps from evidence"),
+            ("A requester asked", "looking for a written how-to"), ("You operate a web app", "operating the UI")]
+WHY = {"410": "410 Gone", "404": "404 Not Found", "405": "405 Not Allowed", "409": "409 Conflict", "422": "422"}
 
 
 def _rung(r: str) -> str | None:
@@ -48,29 +50,36 @@ def _short(s, n=170):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _why(detail) -> str:
+    d = str(detail or "")
+    return next((v for k, v in WHY.items() if k in d), _short(d.split(":")[0], 40))
+
+
 def describe(kind: str, d: dict) -> dict | None:
-    """One event -> one line for the panel (or None to skip it)."""
+    """One event -> one item for the viewer (or None to skip it). Each item has a type `t` the page acts on."""
     if kind == "demo.chapter":
-        return {"cls": "chapter", "text": d.get("title", ""), "sub": d.get("subtitle", "")}
+        return {"t": "chapter", "title": d.get("title", ""), "sub": d.get("subtitle", "")}
     if kind == "run.created":
-        return {"cls": "request", "icon": "📨", "text": f"“{_short(d.get('request'), 200)}”", "sub": d.get("requester", "")}
+        return {"t": "task", "request": _short(d.get("request"), 200), "requester": d.get("requester", "")}
     if kind == "understand.model":
         people = ", ".join(p.get("as_written", "") for p in d.get("people", [])) or "nobody named"
         dates = ", ".join(f"{x.get('as_written')} → {x.get('iso')}" for x in d.get("dates", [])) or "no date"
-        task = d.get("task") or "an unknown task"
-        return {"cls": "think", "icon": "🧠", "text": f"Reads it as: <b>{task}</b> · {people} · {dates}"
-                                                    + (f" · asks: {', '.join(d['explicit_asks'])}" if d.get("explicit_asks") else "")}
+        return {"t": "feed", "phase": "Planning", "cls": "think", "icon": "🧠",
+                "text": f"<b>Model reads it as</b> {d.get('task') or 'an unknown task'} · {people} · {dates}"}
     if kind == "evidence.gathered":
         items = d.get("items", [])
         cnt = lambda p: sum(1 for i in items if i["id"].startswith(p))  # noqa: E731
         bad = sum(1 for i in items if not i["trusted"])
-        return {"cls": "code", "icon": "🔎", "text": f"Code gathers evidence: {cnt('peer:')} peer setups · {cnt('mail:')} mails"
-                                                   f"{f' (<b>{bad} untrusted</b>)' if bad else ''} · {cnt('chat:')} chat messages · the SOP"}
+        return {"t": "feed", "cls": "code", "icon": "🔎",
+                "text": f"<b>Code gathers evidence</b>: {cnt('peer:')} peer setups · {cnt('mail:')} mails"
+                        + (f" (<span class=r>{bad} untrusted</span>)" if bad else "") + f" · {cnt('chat:')} chat messages · the SOP"}
     if kind == "model.thinking":
-        return {"cls": "thinking", "icon": "💭", "text": "Model reasoning: " + _short(d.get("text"), 230)}
+        label = next((v for k, v in THINKING if d.get("call", "").startswith(k)), "drafting a procedure")
+        return {"t": "thinking", "label": label, "text": _short(d.get("text"), 330)}
     if kind == "proposals.model":
-        chans = [s["delta"].get("key", {}).get("channel") or _short(json.dumps(s["delta"].get("expect")), 40) for s in d.get("steps", [])]
-        return {"cls": "think", "icon": "💡", "text": "Model proposes: " + ", ".join(f"#{c}" if c and not str(c).startswith("{") else str(c) for c in chans)}
+        chans = [s["delta"].get("key", {}).get("channel") for s in d.get("steps", [])]
+        return {"t": "feed", "cls": "think", "icon": "💡",
+                "text": "<b>Model proposes</b>: " + (", ".join(f"#{c}" for c in chans if c) or "no extra steps")}
     if kind == "proposals.validated":
         planned = [p.split("channel=")[1].split(",")[0] if "channel=" in p else p for p in d.get("planned", [])]
         rejected = []
@@ -80,51 +89,53 @@ def describe(kind: str, d: dict) -> dict | None:
             elif f.get("kind") == "suspicious_instruction":
                 rejected.append("untrusted mail ignored")
             elif f.get("kind") in ("precedent_rejected", "refused_request", "proposal_rejected"):
-                rejected.append(_short(f.get("detail"), 80))
-        return {"cls": "code", "icon": "🛡️", "text": "Code validates → planned: " + ", ".join(f"#{c}" for c in planned)
-                                                    + (f" · <b>rejected</b>: {'; '.join(sorted(set(rejected)))}" if rejected else "")}
+                rejected.append(_short(f.get("detail"), 70))
+        return {"t": "feed", "cls": "code", "icon": "🛡️",
+                "text": "<b>Code validates</b> → keeps " + (", ".join(f"#{c}" for c in planned) or "nothing")
+                        + (f" · <span class=r>rejects: {'; '.join(sorted(set(rejected)))}</span>" if rejected else "")}
     if kind == "howto.sources":
-        items = d.get("items", [])
-        return {"cls": "code", "icon": "📚", "text": f"Unknown task. Code collects {len(items)} company sources (Drive handbook & templates, ops@ mail) to look for a how-to"}
+        return {"t": "feed", "phase": "Looking for a how-to", "cls": "code", "icon": "📚",
+                "text": f"<b>No procedure for this.</b> Code collects {len(d.get('items', []))} company sources (Drive handbook, templates, ops@ mail)"}
     if kind == "howto.pick":
-        return {"cls": "think", "icon": "📌", "text": f"Model picks {', '.join(d.get('source_ids', [])) or 'nothing'} "
-                                                    f"({d.get('confidence')}): {_short(d.get('why'), 160)}"}
+        return {"t": "feed", "cls": "think", "icon": "📌",
+                "text": f"<b>Model picks</b> {', '.join(d.get('source_ids', [])) or 'nothing'} ({d.get('confidence')}): {_short(d.get('why'), 140)}"}
     if kind == "procedure.draft":
         errs = d.get("errors") or []
-        return {"cls": "code" if not errs else "warn", "icon": "✍️",
-                "text": "Model drafts a procedure → code validator: " + ("<b>valid</b>, saved to drafts/ (not usable until approved)" if not errs
-                                                                           else f"rejected: {_short('; '.join(errs), 140)} → redraft")}
+        return {"t": "feed", "phase": "Drafting a skill", "cls": "warn" if errs else "code", "icon": "✍️",
+                "text": "<b>Model drafts a procedure</b> → code validator: "
+                        + (f"<span class=r>rejected: {_short('; '.join(errs), 120)}</span> → redraft" if errs
+                           else "valid, saved as a draft (unusable until approved)")}
     if kind == "procedure.approved":
-        return {"cls": "learn", "icon": "🎓", "text": f"Skill approved by the requester → <b>{d.get('task_type')}</b> is now a known procedure"}
+        return {"t": "feed", "cls": "learn", "icon": "🎓", "text": f"<b>Skill approved</b> → {d.get('task_type')} is now a known procedure"}
     if kind == "human.ask":
-        q, a = _short(d.get("question"), 220), d.get("answer")
-        return {"cls": "ask", "icon": "❓", "text": f"Asks: {q}" + (f" → <b>{a}</b>" if a else "")}
+        a = d.get("answer")
+        return {"t": "feed", "phase": None if a else "Waiting for the requester", "cls": "ask", "icon": "❓",
+                "text": f"<b>Asks the requester</b>: {_short(d.get('question'), 190)}" + (f" → <b>{a}</b>" if a else " <i>(sent, waiting)</i>")}
+    if kind == "understand.goal":
+        return {"t": "plan", "steps": [{"id": i.get("id"), "d": _short(i.get("d"), 58), "status": i.get("status"),
+                                        "due": (i.get("not_before") or "")[:16].replace("T", " ")} for i in d.get("intents", [])]}
     if kind == "step.start":
-        return {"cls": "step", "icon": "▶", "text": _short(d.get("description"), 120), "ladder": "start"}
+        return {"t": "step_start", "sid": d.get("intent"), "d": _short(d.get("description"), 60)}
     if kind == "explore.step":
-        acts = ", ".join(f"{a.get('action')} {a.get('value') or ''}".strip() for a in d.get("actions", [])) or d.get("action")
-        return {"cls": "ui", "icon": "🖱️", "text": f"{_short(acts, 70)} — <i>{_short(d.get('reason'), 150)}</i>", "ladder": "ui"}
+        acts = " → ".join(f"{a.get('action')} {a.get('value') or ''}".strip() for a in d.get("actions", [])) or d.get("action")
+        return {"t": "explore", "acts": _short(acts, 80), "reason": _short(d.get("reason"), 150)}
     if kind == "step.end":
-        r = _rung(d.get("rung", ""))
         att = d.get("attempts") or []
-        ms = next((a.get("ms") for a in reversed(att) if a.get("ok")), None)
-        failed = [a["rung"] for a in att if not a.get("ok")]
-        txt = (f"✓ verified · {RUNG_LABEL.get(r, d.get('rung'))}" + (f" · {ms} ms" if ms is not None else "")
-               + (f" (after: {', '.join(failed)} failed)" if failed else "")) if d.get("ok") else f"✗ not done ({d.get('rung')})"
-        return {"cls": "ok" if d.get("ok") else "warn", "text": txt, "ladder": r if d.get("ok") else "fail", "ms": ms, "rung": d.get("rung")}
-    if kind == "promoter.synthesized":
-        return {"cls": "learn", "icon": "🧩", "text": "Recorded UI traffic → code synthesizes a typed API tool"}
+        return {"t": "step_end", "sid": d.get("intent"), "ok": d.get("ok"), "rung": _rung(d.get("rung", "")), "raw": d.get("rung"),
+                "ms": next((a.get("ms") for a in reversed(att) if a.get("ok")), None),
+                "failed": [{"rung": _rung(a.get("rung", "")), "why": _why(a.get("detail"))} for a in att if not a.get("ok")]}
     if kind == "promoter.promoted":
-        return {"cls": "learn", "icon": "🎓", "text": "Sandbox test passed (do → verify → undo → verify) → <b>API tool promoted</b>", "ladder": "promoted"}
+        return {"t": "promoted", "cls": "learn", "icon": "🧩",
+                "text": "<b>New API tool learned</b>: recorded UI traffic → typed tool → sandbox test (do → verify → undo → verify) passed → promoted"}
     if kind == "promoter.rejected":
-        return {"cls": "warn", "icon": "✗", "text": f"Tool failed its sandbox test: {_short(d.get('reason'), 100)}"}
-    if kind == "promoter.skip":
-        return {"cls": "code", "icon": "·", "text": "No JSON API behind this UI (form posts) → it stays on the UI rung"}
+        return {"t": "feed", "cls": "warn", "icon": "✗", "text": f"Synthesized tool failed its sandbox test: {_short(d.get('reason'), 100)}"}
     if kind == "rung.demoted":
-        return {"cls": "warn", "icon": "⚠️", "text": f"Learned tool broke: {_short(d.get('reason'), 110)} → <b>demoted</b>, falling back down the ladder",
-                "ladder": "demoted"}
+        return {"t": "demoted", "cls": "warn", "icon": "⚠️", "why": _why(d.get("reason")),
+                "text": f"<b>Learned tool broke</b> ({_why(d.get('reason'))}) → demoted, falling back down the ladder"}
     if kind == "saga.compensate":
-        return {"cls": "warn", "icon": "↩️", "text": f"Required step failed → undoing: {', '.join(d.get('undo', []))}"}
+        return {"t": "feed", "cls": "warn", "icon": "↩️", "text": f"<b>Required step failed</b> → undoing: {', '.join(d.get('undo', []))}"}
+    if kind == "run.stats":
+        return {"t": "task_end", "calls": d.get("llm_calls"), "secs": d.get("t0")}
     return None
 
 
@@ -137,15 +148,18 @@ def events():
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
         try:
             rows = con.execute("SELECT rowid, run_id, kind, data FROM events WHERE rowid > ? ORDER BY rowid LIMIT 300", (after,)).fetchall()
+            for rowid, run_id, kind, data in rows:
+                try:
+                    item = describe(kind, json.loads(data))
+                except Exception:  # noqa: BLE001
+                    item = None
+                if item and item["t"] == "task_end":
+                    st = con.execute("SELECT state FROM runs WHERE id = ?", (run_id,)).fetchone()
+                    item["state"] = st[0] if st else None
+                out.append({"id": rowid, "run": run_id, **(item or {"skip": True})})
         except sqlite3.Error:
-            rows = []
+            pass
         con.close()
-        for rowid, run_id, kind, data in rows:
-            try:
-                line = describe(kind, json.loads(data))
-            except Exception:  # noqa: BLE001
-                line = None
-            out.append({"id": rowid, "run": run_id, **(line or {"skip": True})})
     return jsonify({"events": out, "done": (FRAMES / "done").exists()})
 
 

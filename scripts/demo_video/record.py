@@ -50,7 +50,8 @@ def main():
             # every model call of the live take is recorded, so the video can be re-rendered by replay if needed
             env = {**os.environ, "RUNG_RECORD": os.environ.get("RUNG_RECORD", str(OUT / "demo_run.jsonl"))}
             story = subprocess.run([sys.executable, str(HERE / "story.py")], cwd=ROOT, env=env)
-            page.wait_for_timeout(6000)
+            page.wait_for_function("window.rungIdle === true", timeout=120000)   # the panel has caught up
+            page.wait_for_timeout(5000)
             video = page.video.path()
             ctx.close()
             browser.close()

@@ -128,7 +128,7 @@ def start(request: str, requester: str, approver=None, model=None, answers: dict
         save_goal(rid, goal)
         ctx.log("understand.goal", {"task_type": goal.task_type, "gaps": [asdict(g) for g in goal.gaps],
                                     "flags": goal.flags, "questions": goal.questions, "split": goal.split,
-                                    "intents": [{"d": i.description, "delta": i.delta.describe(), "risk": i.risk, "origin": i.origin,
+                                    "intents": [{"id": i.id, "d": i.description, "delta": i.delta.describe(), "risk": i.risk, "origin": i.origin,
                                                  "status": i.status, "not_before": i.not_before} for i in goal.intents]})
         if goal.ignored:
             goal.flags.append({"kind": "not_a_request", "detail": "This message doesn't ask me to do anything, so I did nothing."})

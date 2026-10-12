@@ -155,9 +155,18 @@ The three failures. Each run reported its own failure, and none claimed success:
 
 No earlier numbers are carried over: they came from the previous architecture (regex understanding, heuristic explorer) and don't describe this code. Those runs' logs are kept, for history only, in `eval/archive_iteration3/`.
 
-Also produced on this branch: `pytest -q` **75 passed**, 1 skipped (the replay test, which runs once `eval/model_run.jsonl` is present and the sandbox is up).
+Also produced on this branch: `pytest -q` **76 passed**: 75 unit tests, plus the replay test (case A1 replayed from `eval/model_run.jsonl` against the live sandbox, 0 misses).
 
-**Replay** (`RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl`): *running at the time of this commit; result to follow.*
+**Replay** (`RUNG_MODEL=replay RUNG_REPLAY=eval/model_run.jsonl python -m eval.run_eval --random 7`) reproduces the live run exactly:
+
+| | live (NIM) | replay (recording) |
+|---|---|---|
+| false successes | 0 | 0 |
+| cases passed | 38/41 | 38/41 |
+| model calls answered | 368 | 368, **0 replay misses** |
+| wall time | 1,734 s | 367 s |
+
+All 41 cases end in the same state, with the same pass/fail and false-success result ([`eval/replay_eval.log`](eval/replay_eval.log), [`eval/results_replay.json`](eval/results_replay.json)). The first replay attempt diverged at A1's SSO step on Django's random password-salt summary. That was fixed by masking it in the replay key (see R6), after which the full replay matched.
 
 The oracle reads the apps' databases and the Drive directly, which the agent can never do. *False success* means the agent claimed done but the oracle disagrees.
 

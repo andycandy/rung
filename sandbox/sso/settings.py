@@ -13,7 +13,8 @@ INSTALLED_APPS = ["django.contrib.admin", "django.contrib.auth", "django.contrib
                   "django.contrib.sessions", "django.contrib.messages"]
 MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware", "django.middleware.common.CommonMiddleware",
               "django.middleware.csrf.CsrfViewMiddleware", "django.contrib.auth.middleware.AuthenticationMiddleware",
-              "django.contrib.messages.middleware.MessageMiddleware"]
+              "django.contrib.messages.middleware.MessageMiddleware",
+              "sandbox.sso.skin.Skin"]   # presentation only (see skin.py)
 ROOT_URLCONF = "sandbox.sso.urls"
 TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "APP_DIRS": True,
               "OPTIONS": {"context_processors": ["django.template.context_processors.request",
